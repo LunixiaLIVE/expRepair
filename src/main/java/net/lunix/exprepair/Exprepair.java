@@ -55,21 +55,22 @@ public class Exprepair implements ModInitializer {
     static int     defaultThreshold = 0;
     static int     maxXpPerRepair   = 8;
 
+    // --- Server-wide allow flags; if false, players cannot enable that mode ---
+    static boolean allowPassive     = true;
+    static boolean allowManual      = true;
+
     // --- Per-player persistent attachments ---
-    public static final AttachmentType<Boolean> PASSIVE_PERMANENT = AttachmentRegistry.<Boolean>builder()
-        .persistent(Codec.BOOL)
-        .initializer(() -> defaultPassive)
-        .buildAndRegister(Identifier.fromNamespaceAndPath("exprepair", "passive_permanent"));
+    public static final AttachmentType<Boolean> PASSIVE_PERMANENT = AttachmentRegistry.create(
+        Identifier.fromNamespaceAndPath("exprepair", "passive_permanent"),
+        builder -> builder.persistent(Codec.BOOL).initializer(() -> defaultPassive));
 
-    public static final AttachmentType<Integer> PASSIVE_THRESHOLD = AttachmentRegistry.<Integer>builder()
-        .persistent(Codec.INT)
-        .initializer(() -> defaultThreshold)
-        .buildAndRegister(Identifier.fromNamespaceAndPath("exprepair", "passive_threshold"));
+    public static final AttachmentType<Integer> PASSIVE_THRESHOLD = AttachmentRegistry.create(
+        Identifier.fromNamespaceAndPath("exprepair", "passive_threshold"),
+        builder -> builder.persistent(Codec.INT).initializer(() -> defaultThreshold));
 
-    public static final AttachmentType<Boolean> MANUAL_PERMANENT = AttachmentRegistry.<Boolean>builder()
-        .persistent(Codec.BOOL)
-        .initializer(() -> defaultManual)
-        .buildAndRegister(Identifier.fromNamespaceAndPath("exprepair", "manual_permanent"));
+    public static final AttachmentType<Boolean> MANUAL_PERMANENT = AttachmentRegistry.create(
+        Identifier.fromNamespaceAndPath("exprepair", "manual_permanent"),
+        builder -> builder.persistent(Codec.BOOL).initializer(() -> defaultManual));
 
     // In-memory session overrides; cleared on disconnect.
     private static final Map<UUID, Boolean> PASSIVE_SESSION = new HashMap<>();
@@ -119,7 +120,7 @@ public class Exprepair implements ModInitializer {
         ServerPlayer serverPlayer = (ServerPlayer) player;
         if (!isEligible(serverPlayer)) return InteractionResult.PASS;
         if (!player.isShiftKeyDown() || stack.isEmpty() || !stack.isDamaged()) return InteractionResult.PASS;
-        if (!isEffective(player, MANUAL_PERMANENT, MANUAL_SESSION)) return InteractionResult.PASS;
+        if (!allowManual || !isEffective(player, MANUAL_PERMANENT, MANUAL_SESSION)) return InteractionResult.PASS;
         if (mendingEntry == null || stack.getEnchantments().getLevel(mendingEntry) == 0) return InteractionResult.PASS;
 
         int availableXp = Math.min(maxXpPerRepair, getTotalXp(player));
@@ -149,7 +150,7 @@ public class Exprepair implements ModInitializer {
         if (server.getTickCount() % 20 != 0 || mendingEntry == null) return;
         for (ServerPlayer player : server.getPlayerList().getPlayers()) {
             if (!isEligible(player)) continue;
-            if (!isEffective(player, PASSIVE_PERMANENT, PASSIVE_SESSION)) continue;
+            if (!allowPassive || !isEffective(player, PASSIVE_PERMANENT, PASSIVE_SESSION)) continue;
             repairEquippedItems(player);
         }
     }
@@ -181,23 +182,31 @@ public class Exprepair implements ModInitializer {
     // =========================================================================
 
     private static void sendLoginMessage(ServerPlayer player) {
-        boolean passiveOn = player.getAttachedOrElse(PASSIVE_PERMANENT, defaultPassive);
-        boolean manualOn  = player.getAttachedOrElse(MANUAL_PERMANENT,  defaultManual);
-        int threshold     = player.getAttachedOrElse(PASSIVE_THRESHOLD, defaultThreshold);
+        boolean passivePerm = player.getAttachedOrElse(PASSIVE_PERMANENT, defaultPassive);
+        boolean manualPerm  = player.getAttachedOrElse(MANUAL_PERMANENT,  defaultManual);
+        boolean passiveOn   = passivePerm && allowPassive;
+        boolean manualOn    = manualPerm  && allowManual;
+        int threshold       = player.getAttachedOrElse(PASSIVE_THRESHOLD, defaultThreshold);
 
         player.displayClientMessage(header("expRepair", "XP-based mending for your gear"), false);
 
-        player.displayClientMessage(
-            Component.literal("  Passive repair: ").withStyle(ChatFormatting.GRAY)
-                .append(statusLabel(passiveOn)).append(Component.literal("  "))
+        MutableComponent passiveStatus = allowPassive
+            ? statusLabel(passivePerm).append(Component.literal("  "))
                 .append(suggestButton("configure", "/exprepair passive",
-                    "Open passive repair options\n/exprepair passive session\n/exprepair passive permanent")), false);
-
+                    "Open passive repair options\n/exprepair passive session\n/exprepair passive permanent"))
+            : Component.literal("DISABLED").withStyle(ChatFormatting.DARK_GRAY)
+                .append(Component.literal(" (admin)").withStyle(ChatFormatting.GRAY));
         player.displayClientMessage(
-            Component.literal("  Manual repair:  ").withStyle(ChatFormatting.GRAY)
-                .append(statusLabel(manualOn)).append(Component.literal("  "))
+            Component.literal("  Passive repair: ").withStyle(ChatFormatting.GRAY).append(passiveStatus), false);
+
+        MutableComponent manualStatus = allowManual
+            ? statusLabel(manualPerm).append(Component.literal("  "))
                 .append(suggestButton("configure", "/exprepair manual",
-                    "Open manual repair options\n/exprepair manual session\n/exprepair manual permanent")), false);
+                    "Open manual repair options\n/exprepair manual session\n/exprepair manual permanent"))
+            : Component.literal("DISABLED").withStyle(ChatFormatting.DARK_GRAY)
+                .append(Component.literal(" (admin)").withStyle(ChatFormatting.GRAY));
+        player.displayClientMessage(
+            Component.literal("  Manual repair:  ").withStyle(ChatFormatting.GRAY).append(manualStatus), false);
 
         if (passiveOn) {
             String threshStr = threshold == 0 ? "none" : threshold + " levels";
@@ -225,7 +234,7 @@ public class Exprepair implements ModInitializer {
     // =========================================================================
 
     private void registerCommands() {
-        CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
+        CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> {
             dispatcher.register(
                 Commands.literal("exprepair")
                     .executes(ctx -> showHelp(ctx.getSource()))
@@ -324,12 +333,44 @@ public class Exprepair implements ModInitializer {
                                 .executes(ctx -> setDefaultPassive(ctx.getSource(), true)))
                             .then(Commands.literal("off")
                                 .executes(ctx -> setDefaultPassive(ctx.getSource(), false)))
+                            .then(Commands.literal("allow")
+                                .then(Commands.literal("on")
+                                    .executes(ctx -> setAllowPassive(ctx.getSource(), true, true))
+                                    .then(Commands.literal("broadcast")
+                                        .executes(ctx -> setAllowPassive(ctx.getSource(), true, true)))
+                                    .then(Commands.literal("silent")
+                                        .executes(ctx -> setAllowPassive(ctx.getSource(), true, false)))
+                                )
+                                .then(Commands.literal("off")
+                                    .executes(ctx -> setAllowPassive(ctx.getSource(), false, true))
+                                    .then(Commands.literal("broadcast")
+                                        .executes(ctx -> setAllowPassive(ctx.getSource(), false, true)))
+                                    .then(Commands.literal("silent")
+                                        .executes(ctx -> setAllowPassive(ctx.getSource(), false, false)))
+                                )
+                            )
                         )
                         .then(Commands.literal("manual")
                             .then(Commands.literal("on")
                                 .executes(ctx -> setDefaultManual(ctx.getSource(), true)))
                             .then(Commands.literal("off")
                                 .executes(ctx -> setDefaultManual(ctx.getSource(), false)))
+                            .then(Commands.literal("allow")
+                                .then(Commands.literal("on")
+                                    .executes(ctx -> setAllowManual(ctx.getSource(), true, true))
+                                    .then(Commands.literal("broadcast")
+                                        .executes(ctx -> setAllowManual(ctx.getSource(), true, true)))
+                                    .then(Commands.literal("silent")
+                                        .executes(ctx -> setAllowManual(ctx.getSource(), true, false)))
+                                )
+                                .then(Commands.literal("off")
+                                    .executes(ctx -> setAllowManual(ctx.getSource(), false, true))
+                                    .then(Commands.literal("broadcast")
+                                        .executes(ctx -> setAllowManual(ctx.getSource(), false, true)))
+                                    .then(Commands.literal("silent")
+                                        .executes(ctx -> setAllowManual(ctx.getSource(), false, false)))
+                                )
+                            )
                         )
                         .then(Commands.literal("threshold")
                             .then(Commands.argument("levels", IntegerArgumentType.integer(0))
@@ -343,13 +384,34 @@ public class Exprepair implements ModInitializer {
                         )
                     )
 
+                    // Player: version
+                    .then(Commands.literal("version")
+                        .executes(ctx -> showVersion(ctx.getSource()))
+                    )
+
+                    // Player: view own status
+                    .then(Commands.literal("status")
+                        .executes(ctx -> showPlayerStatus(ctx.getSource()))
+                    )
+
+                    // Player: view server defaults (read-only)
+                    .then(Commands.literal("serverdefaults")
+                        .executes(ctx -> showServerDefaults(ctx.getSource()))
+                    )
+
                     // Admin: reload
                     .then(Commands.literal("reload")
                         .requires(src -> src.permissions().hasPermission(Permissions.COMMANDS_GAMEMASTER))
-                        .executes(ctx -> adminReload(ctx.getSource()))
+                        .executes(ctx -> adminReload(ctx.getSource(), true))
+                        .then(Commands.literal("broadcast")
+                            .executes(ctx -> adminReload(ctx.getSource(), true)))
+                        .then(Commands.literal("silent")
+                            .executes(ctx -> adminReload(ctx.getSource(), false)))
                     )
-            )
-        );
+            );
+            dispatcher.register(Commands.literal("er")
+                .redirect(dispatcher.getRoot().getChild("exprepair")));
+        });
     }
 
     // =========================================================================
@@ -357,7 +419,8 @@ public class Exprepair implements ModInitializer {
     // =========================================================================
 
     private static int showHelp(CommandSourceStack source) {
-        source.sendSuccess(() -> header("expRepair", "Player Commands"), false);
+        String version = getModVersion();
+        source.sendSuccess(() -> header("expRepair v" + version, "Player Commands"), false);
         source.sendSuccess(() -> Component.empty(), false);
 
         source.sendSuccess(() -> Component.literal("  ")
@@ -397,6 +460,20 @@ public class Exprepair implements ModInitializer {
             .append(Component.literal("  "))
             .append(runButton("clear", "/exprepair threshold 0",
                 "Remove the XP floor — passive repair may use all XP.")), false);
+        source.sendSuccess(() -> Component.empty(), false);
+
+        source.sendSuccess(() -> Component.literal("  ")
+            .append(runButton("/exprepair status", "/exprepair status",
+                "View your current repair settings"))
+            .append(Component.literal("\n    View your current passive, manual, and threshold settings.")
+                .withStyle(ChatFormatting.GRAY)), false);
+        source.sendSuccess(() -> Component.empty(), false);
+
+        source.sendSuccess(() -> Component.literal("  ")
+            .append(runButton("/exprepair serverdefaults", "/exprepair serverdefaults",
+                "View server default settings"))
+            .append(Component.literal("\n    View the server's default repair settings for new players.")
+                .withStyle(ChatFormatting.GRAY)), false);
 
         if (source.permissions().hasPermission(Permissions.COMMANDS_GAMEMASTER)) {
             source.sendSuccess(() -> Component.empty(), false);
@@ -433,6 +510,13 @@ public class Exprepair implements ModInitializer {
                                    AttachmentType<Boolean> attachment, Map<UUID, Boolean> session)
             throws CommandSyntaxException {
         ServerPlayer player = source.getPlayerOrException();
+        boolean featureAllowed = subcommand.equals("passive") ? allowPassive : allowManual;
+        if (!featureAllowed) {
+            source.sendSuccess(() -> header(label, "Options"), false);
+            source.sendSuccess(() -> Component.literal("  This feature has been disabled by an administrator.")
+                .withStyle(ChatFormatting.RED), false);
+            return 1;
+        }
         boolean permanent  = player.getAttachedOrElse(attachment, false);
         boolean hasSession = session.containsKey(player.getUUID());
         boolean effective  = hasSession ? session.get(player.getUUID()) : permanent;
@@ -480,6 +564,12 @@ public class Exprepair implements ModInitializer {
                                      AttachmentType<Boolean> otherAttachment, Map<UUID, Boolean> otherSession,
                                      boolean sessionOnly) throws CommandSyntaxException {
         ServerPlayer player = source.getPlayerOrException();
+        boolean featureAllowed = subcommand.equals("passive") ? allowPassive : allowManual;
+        if (!featureAllowed) {
+            source.sendFailure(Component.literal("  " + label + " has been disabled by the server administrator.")
+                .withStyle(ChatFormatting.RED));
+            return 0;
+        }
         UUID uuid = player.getUUID();
         boolean permanent  = player.getAttachedOrElse(attachment, false);
         boolean hasSession = session.containsKey(uuid);
@@ -781,7 +871,7 @@ public class Exprepair implements ModInitializer {
         return 1;
     }
 
-    private static int adminReload(CommandSourceStack source) {
+    private static int adminReload(CommandSourceStack source, boolean doBroadcast) {
         loadConfig();
         source.sendSuccess(() -> header("expRepair", "config reloaded"), false);
         source.sendSuccess(() -> Component.empty(), false);
@@ -789,11 +879,131 @@ public class Exprepair implements ModInitializer {
             .append(Component.literal(maxXpPerRepair + " XP").withStyle(ChatFormatting.AQUA)), false);
         source.sendSuccess(() -> Component.literal("  Default passive:   ").withStyle(ChatFormatting.GRAY)
             .append(statusLabel(defaultPassive)), false);
+        source.sendSuccess(() -> Component.literal("  Allow passive:     ").withStyle(ChatFormatting.GRAY)
+            .append(statusLabel(allowPassive)), false);
         source.sendSuccess(() -> Component.literal("  Default manual:    ").withStyle(ChatFormatting.GRAY)
             .append(statusLabel(defaultManual)), false);
+        source.sendSuccess(() -> Component.literal("  Allow manual:      ").withStyle(ChatFormatting.GRAY)
+            .append(statusLabel(allowManual)), false);
         source.sendSuccess(() -> Component.literal("  Default threshold: ").withStyle(ChatFormatting.GRAY)
             .append(Component.literal(defaultThreshold == 0 ? "none" : defaultThreshold + " levels")
                 .withStyle(defaultThreshold == 0 ? ChatFormatting.YELLOW : ChatFormatting.AQUA)), false);
+        if (doBroadcast) {
+            String threshStr = defaultThreshold == 0 ? "none" : defaultThreshold + " levels";
+            MutableComponent broadcast = header("expRepair", "config reloaded")
+                .append(Component.literal("\n  Max XP/repair: ").withStyle(ChatFormatting.GRAY))
+                .append(Component.literal(maxXpPerRepair + " XP").withStyle(ChatFormatting.AQUA))
+                .append(Component.literal("  |  Passive: ").withStyle(ChatFormatting.GRAY))
+                .append(allowPassive ? statusLabel(defaultPassive) : Component.literal("DISABLED").withStyle(ChatFormatting.DARK_GRAY))
+                .append(Component.literal("  |  Manual: ").withStyle(ChatFormatting.GRAY))
+                .append(allowManual ? statusLabel(defaultManual) : Component.literal("DISABLED").withStyle(ChatFormatting.DARK_GRAY))
+                .append(Component.literal("  |  Threshold: ").withStyle(ChatFormatting.GRAY))
+                .append(Component.literal(threshStr).withStyle(defaultThreshold == 0 ? ChatFormatting.YELLOW : ChatFormatting.AQUA));
+            source.getServer().getPlayerList().getPlayers()
+                .forEach(p -> p.displayClientMessage(broadcast, false));
+        }
+        return 1;
+    }
+
+    private static String getModVersion() {
+        return FabricLoader.getInstance().getModContainer("exprepair")
+            .map(c -> c.getMetadata().getVersion().getFriendlyString())
+            .orElse("unknown");
+    }
+
+    private static int showVersion(CommandSourceStack source) {
+        String version = getModVersion();
+        source.sendSuccess(() -> Component.literal("◆ ").withStyle(ChatFormatting.GOLD)
+            .append(Component.literal("expRepair").withStyle(ChatFormatting.GOLD, ChatFormatting.BOLD))
+            .append(Component.literal(" v" + version).withStyle(s -> s.withColor(ChatFormatting.AQUA).withBold(false))), false);
+        return 1;
+    }
+
+    private static int showPlayerStatus(CommandSourceStack source) throws CommandSyntaxException {
+        ServerPlayer player = source.getPlayerOrException();
+        boolean passivePerm    = player.getAttachedOrElse(PASSIVE_PERMANENT, defaultPassive);
+        boolean manualPerm     = player.getAttachedOrElse(MANUAL_PERMANENT,  defaultManual);
+        boolean passiveHasSes  = PASSIVE_SESSION.containsKey(player.getUUID());
+        boolean manualHasSes   = MANUAL_SESSION.containsKey(player.getUUID());
+        boolean passiveEff     = passiveHasSes ? PASSIVE_SESSION.get(player.getUUID()) : passivePerm;
+        boolean manualEff      = manualHasSes  ? MANUAL_SESSION.get(player.getUUID())  : manualPerm;
+        int     threshold      = player.getAttachedOrElse(PASSIVE_THRESHOLD, defaultThreshold);
+
+        source.sendSuccess(() -> header("expRepair", "Your Settings"), false);
+        source.sendSuccess(() -> Component.empty(), false);
+
+        MutableComponent passiveLine = Component.literal("  Passive repair: ").withStyle(ChatFormatting.GRAY);
+        if (!allowPassive) {
+            passiveLine.append(Component.literal("DISABLED").withStyle(ChatFormatting.DARK_GRAY))
+                .append(Component.literal(" (blocked by admin)").withStyle(ChatFormatting.GRAY));
+        } else {
+            passiveLine.append(statusLabel(passiveEff))
+                .append(Component.literal(passiveHasSes ? "  (session — perm: " : "  (permanent)")
+                    .withStyle(ChatFormatting.GRAY));
+            if (passiveHasSes) {
+                passiveLine.append(Component.literal(passivePerm ? "ON)" : "OFF)")
+                    .withStyle(passivePerm ? ChatFormatting.GREEN : ChatFormatting.RED));
+            }
+        }
+        source.sendSuccess(() -> passiveLine, false);
+
+        MutableComponent manualLine = Component.literal("  Manual repair:  ").withStyle(ChatFormatting.GRAY);
+        if (!allowManual) {
+            manualLine.append(Component.literal("DISABLED").withStyle(ChatFormatting.DARK_GRAY))
+                .append(Component.literal(" (blocked by admin)").withStyle(ChatFormatting.GRAY));
+        } else {
+            manualLine.append(statusLabel(manualEff))
+                .append(Component.literal(manualHasSes ? "  (session — perm: " : "  (permanent)")
+                    .withStyle(ChatFormatting.GRAY));
+            if (manualHasSes) {
+                manualLine.append(Component.literal(manualPerm ? "ON)" : "OFF)")
+                    .withStyle(manualPerm ? ChatFormatting.GREEN : ChatFormatting.RED));
+            }
+        }
+        source.sendSuccess(() -> manualLine, false);
+
+        String threshStr = threshold == 0 ? "none" : threshold + " levels";
+        source.sendSuccess(() -> Component.literal("  XP threshold:   ").withStyle(ChatFormatting.GRAY)
+            .append(Component.literal(threshStr)
+                .withStyle(threshold == 0 ? ChatFormatting.YELLOW : ChatFormatting.AQUA)), false);
+
+        source.sendSuccess(() -> Component.empty(), false);
+        source.sendSuccess(() -> Component.literal("  ")
+            .append(runButton("configure passive", "/exprepair passive", "Open passive repair options"))
+            .append(Component.literal("  "))
+            .append(runButton("configure manual", "/exprepair manual", "Open manual repair options"))
+            .append(Component.literal("  "))
+            .append(suggestButton("set threshold", "/exprepair threshold ",
+                "Set your XP floor\n/exprepair threshold <levels>")), false);
+
+        return 1;
+    }
+
+    private static int showServerDefaults(CommandSourceStack source) {
+        source.sendSuccess(() -> header("expRepair", "Server Defaults"), false);
+        source.sendSuccess(() -> Component.empty(), false);
+        source.sendSuccess(() -> Component.literal(
+            "  These are the server's default settings for new players.").withStyle(ChatFormatting.GRAY), false);
+        source.sendSuccess(() -> Component.empty(), false);
+
+        source.sendSuccess(() -> Component.literal("  Passive repair:    ").withStyle(ChatFormatting.GRAY)
+            .append(allowPassive ? statusLabel(defaultPassive)
+                : Component.literal("DISABLED").withStyle(ChatFormatting.DARK_GRAY)
+                    .append(Component.literal(" (blocked by admin)").withStyle(ChatFormatting.GRAY))), false);
+
+        source.sendSuccess(() -> Component.literal("  Manual repair:     ").withStyle(ChatFormatting.GRAY)
+            .append(allowManual ? statusLabel(defaultManual)
+                : Component.literal("DISABLED").withStyle(ChatFormatting.DARK_GRAY)
+                    .append(Component.literal(" (blocked by admin)").withStyle(ChatFormatting.GRAY))), false);
+
+        String threshStr = defaultThreshold == 0 ? "none" : defaultThreshold + " levels";
+        source.sendSuccess(() -> Component.literal("  Default threshold: ").withStyle(ChatFormatting.GRAY)
+            .append(Component.literal(threshStr)
+                .withStyle(defaultThreshold == 0 ? ChatFormatting.YELLOW : ChatFormatting.AQUA)), false);
+
+        source.sendSuccess(() -> Component.literal("  Max XP per repair: ").withStyle(ChatFormatting.GRAY)
+            .append(Component.literal(maxXpPerRepair + " XP").withStyle(ChatFormatting.AQUA)), false);
+
         return 1;
     }
 
@@ -815,11 +1025,27 @@ public class Exprepair implements ModInitializer {
             .append(Component.literal("  "))
             .append(runButton("off", "/exprepair default passive off", "Set default passive repair OFF")), false);
 
+        source.sendSuccess(() -> Component.literal("  Passive allowed:   ").withStyle(ChatFormatting.GRAY)
+            .append(statusLabel(allowPassive)).append(Component.literal("  "))
+            .append(runButton("allow", "/exprepair default passive allow on",
+                "Allow players to enable passive repair"))
+            .append(Component.literal("  "))
+            .append(runButton("block", "/exprepair default passive allow off",
+                "Prevent players from using passive repair entirely")), false);
+
         source.sendSuccess(() -> Component.literal("  Manual repair:     ").withStyle(ChatFormatting.GRAY)
             .append(statusLabel(defaultManual)).append(Component.literal("  "))
             .append(runButton("on",  "/exprepair default manual on",  "Set default manual repair ON"))
             .append(Component.literal("  "))
             .append(runButton("off", "/exprepair default manual off", "Set default manual repair OFF")), false);
+
+        source.sendSuccess(() -> Component.literal("  Manual allowed:    ").withStyle(ChatFormatting.GRAY)
+            .append(statusLabel(allowManual)).append(Component.literal("  "))
+            .append(runButton("allow", "/exprepair default manual allow on",
+                "Allow players to enable manual repair"))
+            .append(Component.literal("  "))
+            .append(runButton("block", "/exprepair default manual allow off",
+                "Prevent players from using manual repair entirely")), false);
 
         String threshStr = defaultThreshold == 0 ? "none" : defaultThreshold + " levels";
         source.sendSuccess(() -> Component.literal("  Default threshold: ").withStyle(ChatFormatting.GRAY)
@@ -866,6 +1092,60 @@ public class Exprepair implements ModInitializer {
         return 1;
     }
 
+    private static int setAllowPassive(CommandSourceStack source, boolean state, boolean doBroadcast) {
+        allowPassive = state;
+        saveConfig();
+        if (state) {
+            source.sendSuccess(() -> Component.literal("  Passive repair is now ")
+                .withStyle(ChatFormatting.GREEN)
+                .append(Component.literal("ALLOWED").withStyle(ChatFormatting.GREEN))
+                .append(Component.literal(". Players may enable it. Saved to config.").withStyle(ChatFormatting.GREEN)), true);
+        } else {
+            source.sendSuccess(() -> Component.literal("  Passive repair is now ")
+                .withStyle(ChatFormatting.RED)
+                .append(Component.literal("BLOCKED").withStyle(ChatFormatting.RED))
+                .append(Component.literal(". No player can use passive repair. Saved to config.").withStyle(ChatFormatting.RED)), true);
+        }
+        if (doBroadcast) {
+            MutableComponent broadcast = header("expRepair", "server update")
+                .append(Component.literal("\n  Passive repair has been ").withStyle(ChatFormatting.GRAY))
+                .append(state
+                    ? Component.literal("ALLOWED").withStyle(ChatFormatting.GREEN)
+                    : Component.literal("BLOCKED").withStyle(ChatFormatting.RED))
+                .append(Component.literal(" by an administrator.").withStyle(ChatFormatting.GRAY));
+            source.getServer().getPlayerList().getPlayers()
+                .forEach(p -> p.displayClientMessage(broadcast, false));
+        }
+        return 1;
+    }
+
+    private static int setAllowManual(CommandSourceStack source, boolean state, boolean doBroadcast) {
+        allowManual = state;
+        saveConfig();
+        if (state) {
+            source.sendSuccess(() -> Component.literal("  Manual repair is now ")
+                .withStyle(ChatFormatting.GREEN)
+                .append(Component.literal("ALLOWED").withStyle(ChatFormatting.GREEN))
+                .append(Component.literal(". Players may enable it. Saved to config.").withStyle(ChatFormatting.GREEN)), true);
+        } else {
+            source.sendSuccess(() -> Component.literal("  Manual repair is now ")
+                .withStyle(ChatFormatting.RED)
+                .append(Component.literal("BLOCKED").withStyle(ChatFormatting.RED))
+                .append(Component.literal(". No player can use manual repair. Saved to config.").withStyle(ChatFormatting.RED)), true);
+        }
+        if (doBroadcast) {
+            MutableComponent broadcast = header("expRepair", "server update")
+                .append(Component.literal("\n  Manual repair has been ").withStyle(ChatFormatting.GRAY))
+                .append(state
+                    ? Component.literal("ALLOWED").withStyle(ChatFormatting.GREEN)
+                    : Component.literal("BLOCKED").withStyle(ChatFormatting.RED))
+                .append(Component.literal(" by an administrator.").withStyle(ChatFormatting.GRAY));
+            source.getServer().getPlayerList().getPlayers()
+                .forEach(p -> p.displayClientMessage(broadcast, false));
+        }
+        return 1;
+    }
+
     private static int setDefaultThreshold(CommandSourceStack source, int levels) {
         defaultThreshold = levels;
         saveConfig();
@@ -901,6 +1181,8 @@ public class Exprepair implements ModInitializer {
                     if (obj.has("defaultPassive"))   defaultPassive   = obj.get("defaultPassive").getAsBoolean();
                     if (obj.has("defaultManual"))    defaultManual    = obj.get("defaultManual").getAsBoolean();
                     if (obj.has("defaultThreshold")) defaultThreshold = Math.max(0, obj.get("defaultThreshold").getAsInt());
+                    if (obj.has("allowPassive"))     allowPassive     = obj.get("allowPassive").getAsBoolean();
+                    if (obj.has("allowManual"))      allowManual      = obj.get("allowManual").getAsBoolean();
                 }
             } catch (Exception e) { /* keep defaults */ }
         } else {
@@ -916,6 +1198,8 @@ public class Exprepair implements ModInitializer {
         obj.addProperty("defaultPassive",   defaultPassive);
         obj.addProperty("defaultManual",    defaultManual);
         obj.addProperty("defaultThreshold", defaultThreshold);
+        obj.addProperty("allowPassive",     allowPassive);
+        obj.addProperty("allowManual",      allowManual);
         try (Writer writer = Files.newBufferedWriter(configPath)) {
             gson.toJson(obj, writer);
         } catch (Exception e) { /* ignore */ }
