@@ -13,6 +13,7 @@ import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.event.player.UseItemCallback;
+import net.fabricmc.fabric.api.entity.event.v1.ServerPlayerEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.ChatFormatting;
@@ -43,9 +44,6 @@ import java.io.Reader;
 import java.io.Writer;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.UUID;
 
 public class Exprepair implements ModInitializer {
 
@@ -72,10 +70,6 @@ public class Exprepair implements ModInitializer {
         Identifier.fromNamespaceAndPath("exprepair", "manual_permanent"),
         builder -> builder.persistent(Codec.BOOL).initializer(() -> defaultManual));
 
-    // In-memory session overrides; cleared on disconnect.
-    private static final Map<UUID, Boolean> PASSIVE_SESSION = new HashMap<>();
-    private static final Map<UUID, Boolean> MANUAL_SESSION  = new HashMap<>();
-
     private static Holder<Enchantment> mendingEntry = null;
 
     private static final EquipmentSlot[] SLOTS = {
@@ -98,14 +92,16 @@ public class Exprepair implements ModInitializer {
         });
         ServerLifecycleEvents.SERVER_STOPPED.register(server -> mendingEntry = null);
         ServerTickEvents.END_SERVER_TICK.register(this::onServerTick);
-        ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
-            UUID uuid = handler.player.getUUID();
-            PASSIVE_SESSION.remove(uuid);
-            MANUAL_SESSION.remove(uuid);
-        });
         UseItemCallback.EVENT.register(this::onUseItem);
         ServerPlayConnectionEvents.JOIN.register((handler, sender, server) ->
             sendLoginMessage(handler.player));
+        // Copy per-player attachment data when the player entity is cloned
+        // (fires on both death+respawn and dimension change)
+        ServerPlayerEvents.COPY_FROM.register((oldPlayer, newPlayer, alive) -> {
+            newPlayer.setAttached(PASSIVE_PERMANENT, oldPlayer.getAttachedOrElse(PASSIVE_PERMANENT, defaultPassive));
+            newPlayer.setAttached(MANUAL_PERMANENT,  oldPlayer.getAttachedOrElse(MANUAL_PERMANENT,  defaultManual));
+            newPlayer.setAttached(PASSIVE_THRESHOLD, oldPlayer.getAttachedOrElse(PASSIVE_THRESHOLD, defaultThreshold));
+        });
         registerCommands();
     }
 
@@ -120,7 +116,7 @@ public class Exprepair implements ModInitializer {
         ServerPlayer serverPlayer = (ServerPlayer) player;
         if (!isEligible(serverPlayer)) return InteractionResult.PASS;
         if (!player.isShiftKeyDown() || stack.isEmpty() || !stack.isDamaged()) return InteractionResult.PASS;
-        if (!allowManual || !isEffective(player, MANUAL_PERMANENT, MANUAL_SESSION)) return InteractionResult.PASS;
+        if (!allowManual || !serverPlayer.getAttachedOrElse(MANUAL_PERMANENT, defaultManual)) return InteractionResult.PASS;
         if (mendingEntry == null || stack.getEnchantments().getLevel(mendingEntry) == 0) return InteractionResult.PASS;
 
         int availableXp = Math.min(maxXpPerRepair, getTotalXp(player));
@@ -150,7 +146,7 @@ public class Exprepair implements ModInitializer {
         if (server.getTickCount() % 20 != 0 || mendingEntry == null) return;
         for (ServerPlayer player : server.getPlayerList().getPlayers()) {
             if (!isEligible(player)) continue;
-            if (!allowPassive || !isEffective(player, PASSIVE_PERMANENT, PASSIVE_SESSION)) continue;
+            if (!allowPassive || !player.getAttachedOrElse(PASSIVE_PERMANENT, defaultPassive)) continue;
             repairEquippedItems(player);
         }
     }
@@ -241,24 +237,10 @@ public class Exprepair implements ModInitializer {
 
                     // Player commands
                     .then(Commands.literal("passive")
-                        .executes(ctx -> showOptions(ctx.getSource(), "Passive repair", "passive",
-                            PASSIVE_PERMANENT, PASSIVE_SESSION))
-                        .then(Commands.literal("session")
-                            .executes(ctx -> toggleFeature(ctx.getSource(), "Passive repair", "passive",
-                                PASSIVE_PERMANENT, PASSIVE_SESSION, MANUAL_PERMANENT, MANUAL_SESSION, true)))
-                        .then(Commands.literal("permanent")
-                            .executes(ctx -> toggleFeature(ctx.getSource(), "Passive repair", "passive",
-                                PASSIVE_PERMANENT, PASSIVE_SESSION, MANUAL_PERMANENT, MANUAL_SESSION, false)))
+                        .executes(ctx -> toggleFeature(ctx.getSource(), "Passive repair", "passive"))
                     )
                     .then(Commands.literal("manual")
-                        .executes(ctx -> showOptions(ctx.getSource(), "Manual repair", "manual",
-                            MANUAL_PERMANENT, MANUAL_SESSION))
-                        .then(Commands.literal("session")
-                            .executes(ctx -> toggleFeature(ctx.getSource(), "Manual repair", "manual",
-                                MANUAL_PERMANENT, MANUAL_SESSION, PASSIVE_PERMANENT, PASSIVE_SESSION, true)))
-                        .then(Commands.literal("permanent")
-                            .executes(ctx -> toggleFeature(ctx.getSource(), "Manual repair", "manual",
-                                MANUAL_PERMANENT, MANUAL_SESSION, PASSIVE_PERMANENT, PASSIVE_SESSION, false)))
+                        .executes(ctx -> toggleFeature(ctx.getSource(), "Manual repair", "manual"))
                     )
                     .then(Commands.literal("threshold")
                         .executes(ctx -> showThreshold(ctx.getSource()))
@@ -273,47 +255,24 @@ public class Exprepair implements ModInitializer {
                         .then(Commands.argument("target", EntityArgument.player())
                             .executes(ctx -> adminStatus(ctx.getSource(),
                                 EntityArgument.getPlayer(ctx, "target")))
-                            .then(Commands.literal("status")
-                                .executes(ctx -> adminStatus(ctx.getSource(),
-                                    EntityArgument.getPlayer(ctx, "target"))))
                             .then(Commands.literal("reset")
                                 .executes(ctx -> adminReset(ctx.getSource(),
                                     EntityArgument.getPlayer(ctx, "target"))))
                             .then(Commands.literal("passive")
-                                .then(Commands.literal("session")
-                                    .then(Commands.literal("on")
-                                        .executes(ctx -> adminSetPassive(ctx.getSource(),
-                                            EntityArgument.getPlayer(ctx, "target"), true, true)))
-                                    .then(Commands.literal("off")
-                                        .executes(ctx -> adminSetPassive(ctx.getSource(),
-                                            EntityArgument.getPlayer(ctx, "target"), true, false)))
-                                )
-                                .then(Commands.literal("permanent")
-                                    .then(Commands.literal("on")
-                                        .executes(ctx -> adminSetPassive(ctx.getSource(),
-                                            EntityArgument.getPlayer(ctx, "target"), false, true)))
-                                    .then(Commands.literal("off")
-                                        .executes(ctx -> adminSetPassive(ctx.getSource(),
-                                            EntityArgument.getPlayer(ctx, "target"), false, false)))
-                                )
+                                .then(Commands.literal("on")
+                                    .executes(ctx -> adminSetPassive(ctx.getSource(),
+                                        EntityArgument.getPlayer(ctx, "target"), true)))
+                                .then(Commands.literal("off")
+                                    .executes(ctx -> adminSetPassive(ctx.getSource(),
+                                        EntityArgument.getPlayer(ctx, "target"), false)))
                             )
                             .then(Commands.literal("manual")
-                                .then(Commands.literal("session")
-                                    .then(Commands.literal("on")
-                                        .executes(ctx -> adminSetManual(ctx.getSource(),
-                                            EntityArgument.getPlayer(ctx, "target"), true, true)))
-                                    .then(Commands.literal("off")
-                                        .executes(ctx -> adminSetManual(ctx.getSource(),
-                                            EntityArgument.getPlayer(ctx, "target"), true, false)))
-                                )
-                                .then(Commands.literal("permanent")
-                                    .then(Commands.literal("on")
-                                        .executes(ctx -> adminSetManual(ctx.getSource(),
-                                            EntityArgument.getPlayer(ctx, "target"), false, true)))
-                                    .then(Commands.literal("off")
-                                        .executes(ctx -> adminSetManual(ctx.getSource(),
-                                            EntityArgument.getPlayer(ctx, "target"), false, false)))
-                                )
+                                .then(Commands.literal("on")
+                                    .executes(ctx -> adminSetManual(ctx.getSource(),
+                                        EntityArgument.getPlayer(ctx, "target"), true)))
+                                .then(Commands.literal("off")
+                                    .executes(ctx -> adminSetManual(ctx.getSource(),
+                                        EntityArgument.getPlayer(ctx, "target"), false)))
                             )
                             .then(Commands.literal("threshold")
                                 .then(Commands.argument("levels", IntegerArgumentType.integer(0))
@@ -322,11 +281,8 @@ public class Exprepair implements ModInitializer {
                                         IntegerArgumentType.getInteger(ctx, "levels"))))
                             )
                         )
-                    )
 
-                    // Admin: server defaults
-                    .then(Commands.literal("default")
-                        .requires(src -> src.permissions().hasPermission(Permissions.COMMANDS_GAMEMASTER))
+                        // Admin: server settings
                         .executes(ctx -> showDefaults(ctx.getSource()))
                         .then(Commands.literal("passive")
                             .then(Commands.literal("on")
@@ -336,15 +292,11 @@ public class Exprepair implements ModInitializer {
                             .then(Commands.literal("allow")
                                 .then(Commands.literal("on")
                                     .executes(ctx -> setAllowPassive(ctx.getSource(), true, true))
-                                    .then(Commands.literal("broadcast")
-                                        .executes(ctx -> setAllowPassive(ctx.getSource(), true, true)))
                                     .then(Commands.literal("silent")
                                         .executes(ctx -> setAllowPassive(ctx.getSource(), true, false)))
                                 )
                                 .then(Commands.literal("off")
                                     .executes(ctx -> setAllowPassive(ctx.getSource(), false, true))
-                                    .then(Commands.literal("broadcast")
-                                        .executes(ctx -> setAllowPassive(ctx.getSource(), false, true)))
                                     .then(Commands.literal("silent")
                                         .executes(ctx -> setAllowPassive(ctx.getSource(), false, false)))
                                 )
@@ -358,29 +310,34 @@ public class Exprepair implements ModInitializer {
                             .then(Commands.literal("allow")
                                 .then(Commands.literal("on")
                                     .executes(ctx -> setAllowManual(ctx.getSource(), true, true))
-                                    .then(Commands.literal("broadcast")
-                                        .executes(ctx -> setAllowManual(ctx.getSource(), true, true)))
                                     .then(Commands.literal("silent")
                                         .executes(ctx -> setAllowManual(ctx.getSource(), true, false)))
                                 )
                                 .then(Commands.literal("off")
                                     .executes(ctx -> setAllowManual(ctx.getSource(), false, true))
-                                    .then(Commands.literal("broadcast")
-                                        .executes(ctx -> setAllowManual(ctx.getSource(), false, true)))
                                     .then(Commands.literal("silent")
                                         .executes(ctx -> setAllowManual(ctx.getSource(), false, false)))
                                 )
                             )
                         )
                         .then(Commands.literal("threshold")
+                            .executes(ctx -> showAdminThreshold(ctx.getSource()))
                             .then(Commands.argument("levels", IntegerArgumentType.integer(0))
                                 .executes(ctx -> setDefaultThreshold(ctx.getSource(),
                                     IntegerArgumentType.getInteger(ctx, "levels"))))
                         )
                         .then(Commands.literal("maxXpPerRepair")
+                            .executes(ctx -> showAdminMaxXp(ctx.getSource()))
                             .then(Commands.argument("xp", IntegerArgumentType.integer(1))
                                 .executes(ctx -> setDefaultMaxXp(ctx.getSource(),
                                     IntegerArgumentType.getInteger(ctx, "xp"))))
+                        )
+
+                        // Admin: reload
+                        .then(Commands.literal("reload")
+                            .executes(ctx -> adminReload(ctx.getSource(), true))
+                            .then(Commands.literal("silent")
+                                .executes(ctx -> adminReload(ctx.getSource(), false)))
                         )
                     )
 
@@ -397,16 +354,6 @@ public class Exprepair implements ModInitializer {
                     // Player: view server defaults (read-only)
                     .then(Commands.literal("serverdefaults")
                         .executes(ctx -> showServerDefaults(ctx.getSource()))
-                    )
-
-                    // Admin: reload
-                    .then(Commands.literal("reload")
-                        .requires(src -> src.permissions().hasPermission(Permissions.COMMANDS_GAMEMASTER))
-                        .executes(ctx -> adminReload(ctx.getSource(), true))
-                        .then(Commands.literal("broadcast")
-                            .executes(ctx -> adminReload(ctx.getSource(), true)))
-                        .then(Commands.literal("silent")
-                            .executes(ctx -> adminReload(ctx.getSource(), false)))
                     )
             );
             dispatcher.register(Commands.literal("er")
@@ -482,22 +429,22 @@ public class Exprepair implements ModInitializer {
 
             source.sendSuccess(() -> Component.literal("  ")
                 .append(suggestButton("/exprepair admin <player>", "/exprepair admin ",
-                    "Click to type: /exprepair admin <player>\nSub-commands: status, reset,\n  passive session|permanent on|off\n  manual session|permanent on|off\n  threshold <n>"))
-                .append(Component.literal("\n    View or set a player's repair settings.\n"
-                    + "    All changes can be session-only or permanent.").withStyle(ChatFormatting.GRAY)), false);
+                    "Click to type: /exprepair admin <player>\nSub-commands: reset,\n  passive on|off\n  manual on|off\n  threshold <n>"))
+                .append(Component.literal("\n    View or set a player's repair settings.").withStyle(ChatFormatting.GRAY)), false);
             source.sendSuccess(() -> Component.empty(), false);
 
             source.sendSuccess(() -> Component.literal("  ")
-                .append(runButton("/exprepair default", "/exprepair default",
-                    "View current server defaults"))
-                .append(Component.literal("\n    View or change server-wide new-player defaults.\n"
+                .append(runButton("/exprepair admin", "/exprepair admin",
+                    "View server settings"))
+                .append(Component.literal("\n    View or change server-wide settings.\n"
                     + "    Saves to config/exprepair.json immediately.\n"
                     + "    Sub-commands: passive on|off, manual on|off,\n"
-                    + "      threshold <n>, maxXpPerRepair <n>").withStyle(ChatFormatting.GRAY)), false);
+                    + "      threshold <n>, maxXpPerRepair <n>,\n"
+                    + "      reload [silent]").withStyle(ChatFormatting.GRAY)), false);
             source.sendSuccess(() -> Component.empty(), false);
 
             source.sendSuccess(() -> Component.literal("  ")
-                .append(runButton("/exprepair reload", "/exprepair reload",
+                .append(runButton("/exprepair admin reload", "/exprepair admin reload",
                     "Re-read exprepair.json from disk.\nNo restart required."))
                 .append(Component.literal("\n    Reload config/exprepair.json without restarting.\n"
                     + "    Updates all defaults immediately.").withStyle(ChatFormatting.GRAY)), false);
@@ -506,63 +453,8 @@ public class Exprepair implements ModInitializer {
         return 1;
     }
 
-    private static int showOptions(CommandSourceStack source, String label, String subcommand,
-                                   AttachmentType<Boolean> attachment, Map<UUID, Boolean> session)
+    private static int toggleFeature(CommandSourceStack source, String label, String subcommand)
             throws CommandSyntaxException {
-        ServerPlayer player = source.getPlayerOrException();
-        boolean featureAllowed = subcommand.equals("passive") ? allowPassive : allowManual;
-        if (!featureAllowed) {
-            source.sendSuccess(() -> header(label, "Options"), false);
-            source.sendSuccess(() -> Component.literal("  This feature has been disabled by an administrator.")
-                .withStyle(ChatFormatting.RED), false);
-            return 1;
-        }
-        boolean permanent  = player.getAttachedOrElse(attachment, false);
-        boolean hasSession = session.containsKey(player.getUUID());
-        boolean effective  = hasSession ? session.get(player.getUUID()) : permanent;
-        boolean newState   = !effective;
-        String sourceLabel = hasSession ? " (session override)" : " (permanent)";
-
-        source.sendSuccess(() -> header(label, "Options"), false);
-        source.sendSuccess(() -> Component.empty(), false);
-
-        source.sendSuccess(() -> Component.literal("  Status: ").withStyle(ChatFormatting.GRAY)
-            .append(statusLabel(effective))
-            .append(Component.literal(sourceLabel).withStyle(ChatFormatting.GRAY)), false);
-
-        if (hasSession) {
-            source.sendSuccess(() -> Component.literal("  Permanent setting: ").withStyle(ChatFormatting.GRAY)
-                .append(statusLabel(permanent))
-                .append(Component.literal(" (restores on next login)").withStyle(ChatFormatting.GRAY)), false);
-        }
-
-        source.sendSuccess(() -> Component.empty(), false);
-        source.sendSuccess(() -> Component.literal("  Toggle ").withStyle(ChatFormatting.GRAY)
-            .append(Component.literal(newState ? "ON" : "OFF")
-                .withStyle(newState ? ChatFormatting.GREEN : ChatFormatting.RED))
-            .append(Component.literal(":").withStyle(ChatFormatting.GRAY)), false);
-
-        source.sendSuccess(() -> Component.literal("    ")
-            .append(runButton("this session only", "/exprepair " + subcommand + " session",
-                "Toggle " + label + " for this session only.\n"
-                + "Reverts to permanent setting on disconnect.\n"
-                + "Command: /exprepair " + subcommand + " session"))
-            .append(Component.literal("  — temporary, resets on disconnect.").withStyle(ChatFormatting.GRAY)), false);
-
-        source.sendSuccess(() -> Component.literal("    ")
-            .append(runButton("permanently", "/exprepair " + subcommand + " permanent",
-                "Toggle " + label + " permanently.\n"
-                + "Persists across logins and restarts.\n"
-                + "Command: /exprepair " + subcommand + " permanent"))
-            .append(Component.literal("  — survives disconnects and restarts.").withStyle(ChatFormatting.GRAY)), false);
-
-        return 1;
-    }
-
-    private static int toggleFeature(CommandSourceStack source, String label, String subcommand,
-                                     AttachmentType<Boolean> attachment, Map<UUID, Boolean> session,
-                                     AttachmentType<Boolean> otherAttachment, Map<UUID, Boolean> otherSession,
-                                     boolean sessionOnly) throws CommandSyntaxException {
         ServerPlayer player = source.getPlayerOrException();
         boolean featureAllowed = subcommand.equals("passive") ? allowPassive : allowManual;
         if (!featureAllowed) {
@@ -570,42 +462,24 @@ public class Exprepair implements ModInitializer {
                 .withStyle(ChatFormatting.RED));
             return 0;
         }
-        UUID uuid = player.getUUID();
-        boolean permanent  = player.getAttachedOrElse(attachment, false);
-        boolean hasSession = session.containsKey(uuid);
-        boolean effective  = hasSession ? session.get(uuid) : permanent;
-        boolean newState   = !effective;
-        boolean otherWasOn = false;
 
-        if (sessionOnly) {
-            if (newState == permanent) { session.remove(uuid); } else { session.put(uuid, newState); }
-            if (newState) {
-                boolean otherPerm   = player.getAttachedOrElse(otherAttachment, false);
-                boolean otherHasSes = otherSession.containsKey(uuid);
-                otherWasOn = otherHasSes ? otherSession.get(uuid) : otherPerm;
-                if (otherPerm) { otherSession.put(uuid, false); } else { otherSession.remove(uuid); }
-            }
-        } else {
-            player.setAttached(attachment, newState);
-            session.remove(uuid);
-            if (newState) {
-                boolean otherPerm   = player.getAttachedOrElse(otherAttachment, false);
-                boolean otherHasSes = otherSession.containsKey(uuid);
-                otherWasOn = otherHasSes ? otherSession.get(uuid) : otherPerm;
-                player.setAttached(otherAttachment, false);
-                otherSession.remove(uuid);
-            }
-        }
+        AttachmentType<Boolean> attachment      = subcommand.equals("passive") ? PASSIVE_PERMANENT : MANUAL_PERMANENT;
+        AttachmentType<Boolean> otherAttachment = subcommand.equals("passive") ? MANUAL_PERMANENT  : PASSIVE_PERMANENT;
+        boolean defaultVal  = subcommand.equals("passive") ? defaultPassive : defaultManual;
+        boolean otherDefault = subcommand.equals("passive") ? defaultManual : defaultPassive;
+        String  otherLabel  = subcommand.equals("passive") ? "Manual repair" : "Passive repair";
 
-        final boolean disabledOther = newState && otherWasOn;
-        final String  otherLabel    = subcommand.equals("passive") ? "Manual repair" : "Passive repair";
-        final String  scope         = sessionOnly ? "for this session" : "permanently";
+        boolean current    = player.getAttachedOrElse(attachment, defaultVal);
+        boolean newState   = !current;
+        boolean otherWasOn = newState && player.getAttachedOrElse(otherAttachment, otherDefault);
+
+        player.setAttached(attachment, newState);
+        if (newState) player.setAttached(otherAttachment, false);
 
         source.sendSuccess(() -> Component.literal("  " + label + " ").withStyle(ChatFormatting.GRAY)
-            .append(statusLabel(newState))
-            .append(Component.literal("  (" + scope + ")").withStyle(ChatFormatting.GRAY)), false);
+            .append(statusLabel(newState)), false);
 
-        if (disabledOther) {
+        if (otherWasOn) {
             source.sendSuccess(() -> Component.literal("  " + otherLabel + " ").withStyle(ChatFormatting.GRAY)
                 .append(Component.literal("OFF").withStyle(ChatFormatting.RED))
                 .append(Component.literal("  (only one mode can be active at a time)").withStyle(ChatFormatting.GRAY)), false);
@@ -621,8 +495,8 @@ public class Exprepair implements ModInitializer {
                 .append(Component.literal(" to protect a minimum XP level.").withStyle(ChatFormatting.GRAY)), false);
         }
         source.sendSuccess(() -> Component.literal("  ")
-            .append(runButton("undo", "/exprepair " + subcommand + (sessionOnly ? " session" : " permanent"),
-                "Undo — turn " + label + " back " + (newState ? "OFF" : "ON") + " " + scope + ".")), false);
+            .append(runButton("undo", "/exprepair " + subcommand,
+                "Undo — turn " + label + " back " + (newState ? "OFF" : "ON") + ".")), false);
 
         return 1;
     }
@@ -683,35 +557,19 @@ public class Exprepair implements ModInitializer {
     // =========================================================================
 
     private static int adminStatus(CommandSourceStack source, ServerPlayer target) {
-        boolean passivePerm     = target.getAttachedOrElse(PASSIVE_PERMANENT, defaultPassive);
-        boolean manualPerm      = target.getAttachedOrElse(MANUAL_PERMANENT,  defaultManual);
-        boolean passiveHasSes   = PASSIVE_SESSION.containsKey(target.getUUID());
-        boolean manualHasSes    = MANUAL_SESSION.containsKey(target.getUUID());
-        boolean passiveEffective = passiveHasSes ? PASSIVE_SESSION.get(target.getUUID()) : passivePerm;
-        boolean manualEffective  = manualHasSes  ? MANUAL_SESSION.get(target.getUUID())  : manualPerm;
-        int     threshold        = target.getAttachedOrElse(PASSIVE_THRESHOLD, defaultThreshold);
-        String  name             = target.getName().getString();
+        boolean passiveOn = target.getAttachedOrElse(PASSIVE_PERMANENT, defaultPassive);
+        boolean manualOn  = target.getAttachedOrElse(MANUAL_PERMANENT,  defaultManual);
+        int     threshold = target.getAttachedOrElse(PASSIVE_THRESHOLD, defaultThreshold);
+        String  name      = target.getName().getString();
 
         source.sendSuccess(() -> header(name, "expRepair Status"), false);
         source.sendSuccess(() -> Component.empty(), false);
 
         source.sendSuccess(() -> Component.literal("  Passive repair: ").withStyle(ChatFormatting.GRAY)
-            .append(statusLabel(passiveEffective))
-            .append(Component.literal(passiveHasSes ? "  (session — perm: " : "  (permanent)")
-                .withStyle(ChatFormatting.GRAY))
-            .append(passiveHasSes
-                ? Component.literal(passivePerm ? "ON)" : "OFF)")
-                    .withStyle(passivePerm ? ChatFormatting.GREEN : ChatFormatting.RED)
-                : Component.literal("")), false);
+            .append(statusLabel(passiveOn)), false);
 
         source.sendSuccess(() -> Component.literal("  Manual repair:  ").withStyle(ChatFormatting.GRAY)
-            .append(statusLabel(manualEffective))
-            .append(Component.literal(manualHasSes ? "  (session — perm: " : "  (permanent)")
-                .withStyle(ChatFormatting.GRAY))
-            .append(manualHasSes
-                ? Component.literal(manualPerm ? "ON)" : "OFF)")
-                    .withStyle(manualPerm ? ChatFormatting.GREEN : ChatFormatting.RED)
-                : Component.literal("")), false);
+            .append(statusLabel(manualOn)), false);
 
         String threshStr = threshold == 0 ? "none" : threshold + " levels";
         source.sendSuccess(() -> Component.literal("  XP threshold:   ").withStyle(ChatFormatting.GRAY)
@@ -724,16 +582,13 @@ public class Exprepair implements ModInitializer {
                 "Reset " + name + " to server defaults:\n"
                 + "  Passive: " + (defaultPassive ? "ON" : "OFF") + "\n"
                 + "  Manual: "  + (defaultManual  ? "ON" : "OFF") + "\n"
-                + "  Threshold: " + (defaultThreshold == 0 ? "none" : defaultThreshold + " levels") + "\n"
-                + "Clears session overrides."))
+                + "  Threshold: " + (defaultThreshold == 0 ? "none" : defaultThreshold + " levels")))
             .append(Component.literal("  "))
-            .append(suggestButton("passive...", "/exprepair admin " + name + " passive permanent ",
-                "/exprepair admin " + name + " passive permanent on|off\n"
-                + "/exprepair admin " + name + " passive session on|off"))
+            .append(suggestButton("passive...", "/exprepair admin " + name + " passive ",
+                "/exprepair admin " + name + " passive on|off"))
             .append(Component.literal("  "))
-            .append(suggestButton("manual...", "/exprepair admin " + name + " manual permanent ",
-                "/exprepair admin " + name + " manual permanent on|off\n"
-                + "/exprepair admin " + name + " manual session on|off"))
+            .append(suggestButton("manual...", "/exprepair admin " + name + " manual ",
+                "/exprepair admin " + name + " manual on|off"))
             .append(Component.literal("  "))
             .append(suggestButton("threshold...", "/exprepair admin " + name + " threshold ",
                 "/exprepair admin " + name + " threshold <levels>")), false);
@@ -745,8 +600,6 @@ public class Exprepair implements ModInitializer {
         target.setAttached(PASSIVE_PERMANENT, defaultPassive);
         target.setAttached(MANUAL_PERMANENT,  defaultManual);
         target.setAttached(PASSIVE_THRESHOLD, defaultThreshold);
-        PASSIVE_SESSION.remove(target.getUUID());
-        MANUAL_SESSION.remove(target.getUUID());
 
         String name      = target.getName().getString();
         String threshStr = defaultThreshold == 0 ? "none" : defaultThreshold + " levels";
@@ -774,28 +627,13 @@ public class Exprepair implements ModInitializer {
         return 1;
     }
 
-    private static int adminSetPassive(CommandSourceStack source, ServerPlayer target,
-                                       boolean sessionOnly, boolean state) {
-        UUID   uuid = target.getUUID();
+    private static int adminSetPassive(CommandSourceStack source, ServerPlayer target, boolean state) {
         String name = target.getName().getString();
+        target.setAttached(PASSIVE_PERMANENT, state);
+        if (state) target.setAttached(MANUAL_PERMANENT, false);
 
-        if (sessionOnly) {
-            boolean perm = target.getAttachedOrElse(PASSIVE_PERMANENT, defaultPassive);
-            if (state == perm) { PASSIVE_SESSION.remove(uuid); } else { PASSIVE_SESSION.put(uuid, state); }
-            if (state) {
-                boolean manPerm = target.getAttachedOrElse(MANUAL_PERMANENT, defaultManual);
-                if (manPerm) { MANUAL_SESSION.put(uuid, false); } else { MANUAL_SESSION.remove(uuid); }
-            }
-        } else {
-            target.setAttached(PASSIVE_PERMANENT, state);
-            PASSIVE_SESSION.remove(uuid);
-            if (state) { target.setAttached(MANUAL_PERMANENT, false); MANUAL_SESSION.remove(uuid); }
-        }
-
-        final String scope = sessionOnly ? "this session" : "permanently";
         source.sendSuccess(() -> Component.literal("  " + name + " passive repair ").withStyle(ChatFormatting.GRAY)
-            .append(statusLabel(state))
-            .append(Component.literal("  (" + scope + ")").withStyle(ChatFormatting.GRAY)), true);
+            .append(statusLabel(state)), true);
         if (state) {
             source.sendSuccess(() -> Component.literal("  " + name + " manual repair ").withStyle(ChatFormatting.GRAY)
                 .append(Component.literal("OFF").withStyle(ChatFormatting.RED))
@@ -806,33 +644,18 @@ public class Exprepair implements ModInitializer {
             Component.literal("  expRepair ").withStyle(ChatFormatting.GOLD, ChatFormatting.BOLD)
                 .append(Component.literal("Passive repair ").withStyle(s -> s.withColor(ChatFormatting.GRAY).withBold(false)))
                 .append(statusLabel(state))
-                .append(Component.literal(" set by admin (" + scope + ").").withStyle(ChatFormatting.GRAY)), false);
+                .append(Component.literal(" set by admin.").withStyle(ChatFormatting.GRAY)), false);
 
         return 1;
     }
 
-    private static int adminSetManual(CommandSourceStack source, ServerPlayer target,
-                                      boolean sessionOnly, boolean state) {
-        UUID   uuid = target.getUUID();
+    private static int adminSetManual(CommandSourceStack source, ServerPlayer target, boolean state) {
         String name = target.getName().getString();
+        target.setAttached(MANUAL_PERMANENT, state);
+        if (state) target.setAttached(PASSIVE_PERMANENT, false);
 
-        if (sessionOnly) {
-            boolean perm = target.getAttachedOrElse(MANUAL_PERMANENT, defaultManual);
-            if (state == perm) { MANUAL_SESSION.remove(uuid); } else { MANUAL_SESSION.put(uuid, state); }
-            if (state) {
-                boolean passPerm = target.getAttachedOrElse(PASSIVE_PERMANENT, defaultPassive);
-                if (passPerm) { PASSIVE_SESSION.put(uuid, false); } else { PASSIVE_SESSION.remove(uuid); }
-            }
-        } else {
-            target.setAttached(MANUAL_PERMANENT, state);
-            MANUAL_SESSION.remove(uuid);
-            if (state) { target.setAttached(PASSIVE_PERMANENT, false); PASSIVE_SESSION.remove(uuid); }
-        }
-
-        final String scope = sessionOnly ? "this session" : "permanently";
         source.sendSuccess(() -> Component.literal("  " + name + " manual repair ").withStyle(ChatFormatting.GRAY)
-            .append(statusLabel(state))
-            .append(Component.literal("  (" + scope + ")").withStyle(ChatFormatting.GRAY)), true);
+            .append(statusLabel(state)), true);
         if (state) {
             source.sendSuccess(() -> Component.literal("  " + name + " passive repair ").withStyle(ChatFormatting.GRAY)
                 .append(Component.literal("OFF").withStyle(ChatFormatting.RED))
@@ -843,7 +666,7 @@ public class Exprepair implements ModInitializer {
             Component.literal("  expRepair ").withStyle(ChatFormatting.GOLD, ChatFormatting.BOLD)
                 .append(Component.literal("Manual repair ").withStyle(s -> s.withColor(ChatFormatting.GRAY).withBold(false)))
                 .append(statusLabel(state))
-                .append(Component.literal(" set by admin (" + scope + ").").withStyle(ChatFormatting.GRAY)), false);
+                .append(Component.literal(" set by admin.").withStyle(ChatFormatting.GRAY)), false);
         if (state) {
             target.displayClientMessage(
                 Component.literal("  Sneak + right-click in air to repair a held Mending item.")
@@ -921,13 +744,9 @@ public class Exprepair implements ModInitializer {
 
     private static int showPlayerStatus(CommandSourceStack source) throws CommandSyntaxException {
         ServerPlayer player = source.getPlayerOrException();
-        boolean passivePerm    = player.getAttachedOrElse(PASSIVE_PERMANENT, defaultPassive);
-        boolean manualPerm     = player.getAttachedOrElse(MANUAL_PERMANENT,  defaultManual);
-        boolean passiveHasSes  = PASSIVE_SESSION.containsKey(player.getUUID());
-        boolean manualHasSes   = MANUAL_SESSION.containsKey(player.getUUID());
-        boolean passiveEff     = passiveHasSes ? PASSIVE_SESSION.get(player.getUUID()) : passivePerm;
-        boolean manualEff      = manualHasSes  ? MANUAL_SESSION.get(player.getUUID())  : manualPerm;
-        int     threshold      = player.getAttachedOrElse(PASSIVE_THRESHOLD, defaultThreshold);
+        boolean passiveOn = player.getAttachedOrElse(PASSIVE_PERMANENT, defaultPassive);
+        boolean manualOn  = player.getAttachedOrElse(MANUAL_PERMANENT,  defaultManual);
+        int     threshold = player.getAttachedOrElse(PASSIVE_THRESHOLD, defaultThreshold);
 
         source.sendSuccess(() -> header("expRepair", "Your Settings"), false);
         source.sendSuccess(() -> Component.empty(), false);
@@ -937,13 +756,7 @@ public class Exprepair implements ModInitializer {
             passiveLine.append(Component.literal("DISABLED").withStyle(ChatFormatting.DARK_GRAY))
                 .append(Component.literal(" (blocked by admin)").withStyle(ChatFormatting.GRAY));
         } else {
-            passiveLine.append(statusLabel(passiveEff))
-                .append(Component.literal(passiveHasSes ? "  (session — perm: " : "  (permanent)")
-                    .withStyle(ChatFormatting.GRAY));
-            if (passiveHasSes) {
-                passiveLine.append(Component.literal(passivePerm ? "ON)" : "OFF)")
-                    .withStyle(passivePerm ? ChatFormatting.GREEN : ChatFormatting.RED));
-            }
+            passiveLine.append(statusLabel(passiveOn));
         }
         source.sendSuccess(() -> passiveLine, false);
 
@@ -952,13 +765,7 @@ public class Exprepair implements ModInitializer {
             manualLine.append(Component.literal("DISABLED").withStyle(ChatFormatting.DARK_GRAY))
                 .append(Component.literal(" (blocked by admin)").withStyle(ChatFormatting.GRAY));
         } else {
-            manualLine.append(statusLabel(manualEff))
-                .append(Component.literal(manualHasSes ? "  (session — perm: " : "  (permanent)")
-                    .withStyle(ChatFormatting.GRAY));
-            if (manualHasSes) {
-                manualLine.append(Component.literal(manualPerm ? "ON)" : "OFF)")
-                    .withStyle(manualPerm ? ChatFormatting.GREEN : ChatFormatting.RED));
-            }
+            manualLine.append(statusLabel(manualOn));
         }
         source.sendSuccess(() -> manualLine, false);
 
@@ -969,9 +776,9 @@ public class Exprepair implements ModInitializer {
 
         source.sendSuccess(() -> Component.empty(), false);
         source.sendSuccess(() -> Component.literal("  ")
-            .append(runButton("configure passive", "/exprepair passive", "Open passive repair options"))
+            .append(runButton("toggle passive", "/exprepair passive", "Toggle passive repair on/off"))
             .append(Component.literal("  "))
-            .append(runButton("configure manual", "/exprepair manual", "Open manual repair options"))
+            .append(runButton("toggle manual", "/exprepair manual", "Toggle manual repair on/off"))
             .append(Component.literal("  "))
             .append(suggestButton("set threshold", "/exprepair threshold ",
                 "Set your XP floor\n/exprepair threshold <levels>")), false);
@@ -1021,30 +828,30 @@ public class Exprepair implements ModInitializer {
 
         source.sendSuccess(() -> Component.literal("  Passive repair:    ").withStyle(ChatFormatting.GRAY)
             .append(statusLabel(defaultPassive)).append(Component.literal("  "))
-            .append(runButton("on",  "/exprepair default passive on",  "Set default passive repair ON"))
+            .append(runButton("on",  "/exprepair admin passive on",  "Set default passive repair ON"))
             .append(Component.literal("  "))
-            .append(runButton("off", "/exprepair default passive off", "Set default passive repair OFF")), false);
+            .append(runButton("off", "/exprepair admin passive off", "Set default passive repair OFF")), false);
 
         source.sendSuccess(() -> Component.literal("  Passive allowed:   ").withStyle(ChatFormatting.GRAY)
             .append(statusLabel(allowPassive)).append(Component.literal("  "))
-            .append(runButton("allow", "/exprepair default passive allow on",
+            .append(runButton("allow", "/exprepair admin passive allow on",
                 "Allow players to enable passive repair"))
             .append(Component.literal("  "))
-            .append(runButton("block", "/exprepair default passive allow off",
+            .append(runButton("block", "/exprepair admin passive allow off",
                 "Prevent players from using passive repair entirely")), false);
 
         source.sendSuccess(() -> Component.literal("  Manual repair:     ").withStyle(ChatFormatting.GRAY)
             .append(statusLabel(defaultManual)).append(Component.literal("  "))
-            .append(runButton("on",  "/exprepair default manual on",  "Set default manual repair ON"))
+            .append(runButton("on",  "/exprepair admin manual on",  "Set default manual repair ON"))
             .append(Component.literal("  "))
-            .append(runButton("off", "/exprepair default manual off", "Set default manual repair OFF")), false);
+            .append(runButton("off", "/exprepair admin manual off", "Set default manual repair OFF")), false);
 
         source.sendSuccess(() -> Component.literal("  Manual allowed:    ").withStyle(ChatFormatting.GRAY)
             .append(statusLabel(allowManual)).append(Component.literal("  "))
-            .append(runButton("allow", "/exprepair default manual allow on",
+            .append(runButton("allow", "/exprepair admin manual allow on",
                 "Allow players to enable manual repair"))
             .append(Component.literal("  "))
-            .append(runButton("block", "/exprepair default manual allow off",
+            .append(runButton("block", "/exprepair admin manual allow off",
                 "Prevent players from using manual repair entirely")), false);
 
         String threshStr = defaultThreshold == 0 ? "none" : defaultThreshold + " levels";
@@ -1052,26 +859,32 @@ public class Exprepair implements ModInitializer {
             .append(Component.literal(threshStr)
                 .withStyle(defaultThreshold == 0 ? ChatFormatting.YELLOW : ChatFormatting.AQUA))
             .append(Component.literal("  "))
-            .append(suggestButton("set", "/exprepair default threshold ",
-                "Set default XP threshold\n/exprepair default threshold <levels>"))
+            .append(suggestButton("set", "/exprepair admin threshold ",
+                "Set default XP threshold\n/exprepair admin threshold <levels>"))
             .append(Component.literal("  "))
-            .append(runButton("clear", "/exprepair default threshold 0", "Set default threshold to 0")), false);
+            .append(runButton("clear", "/exprepair admin threshold 0", "Set default threshold to 0")), false);
 
         source.sendSuccess(() -> Component.literal("  Max XP per repair: ").withStyle(ChatFormatting.GRAY)
             .append(Component.literal(maxXpPerRepair + " XP").withStyle(ChatFormatting.AQUA))
             .append(Component.literal("  "))
-            .append(suggestButton("set", "/exprepair default maxXpPerRepair ",
-                "Set max XP spent per repair tick\n/exprepair default maxXpPerRepair <xp>")), false);
+            .append(suggestButton("set", "/exprepair admin maxXpPerRepair ",
+                "Set max XP spent per repair tick\n/exprepair admin maxXpPerRepair <xp>")), false);
 
         return 1;
     }
 
     private static int setDefaultPassive(CommandSourceStack source, boolean state) {
         defaultPassive = state;
+        if (state) defaultManual = false;
         saveConfig();
         source.sendSuccess(() -> Component.literal("  Default passive repair set to ").withStyle(ChatFormatting.GREEN)
             .append(statusLabel(state))
             .append(Component.literal(". Saved to config.").withStyle(ChatFormatting.GREEN)), true);
+        if (state) {
+            source.sendSuccess(() -> Component.literal("  Default manual repair set to ").withStyle(ChatFormatting.GRAY)
+                .append(Component.literal("OFF").withStyle(ChatFormatting.RED))
+                .append(Component.literal("  (only one mode can be default at a time)").withStyle(ChatFormatting.GRAY)), false);
+        }
         source.sendSuccess(() -> Component.literal("  Use ").withStyle(ChatFormatting.GRAY)
             .append(suggestButton("/exprepair admin <player> reset", "/exprepair admin ",
                 "Reset a specific player to apply new defaults"))
@@ -1081,10 +894,16 @@ public class Exprepair implements ModInitializer {
 
     private static int setDefaultManual(CommandSourceStack source, boolean state) {
         defaultManual = state;
+        if (state) defaultPassive = false;
         saveConfig();
         source.sendSuccess(() -> Component.literal("  Default manual repair set to ").withStyle(ChatFormatting.GREEN)
             .append(statusLabel(state))
             .append(Component.literal(". Saved to config.").withStyle(ChatFormatting.GREEN)), true);
+        if (state) {
+            source.sendSuccess(() -> Component.literal("  Default passive repair set to ").withStyle(ChatFormatting.GRAY)
+                .append(Component.literal("OFF").withStyle(ChatFormatting.RED))
+                .append(Component.literal("  (only one mode can be default at a time)").withStyle(ChatFormatting.GRAY)), false);
+        }
         source.sendSuccess(() -> Component.literal("  Use ").withStyle(ChatFormatting.GRAY)
             .append(suggestButton("/exprepair admin <player> reset", "/exprepair admin ",
                 "Reset a specific player to apply new defaults"))
@@ -1146,6 +965,28 @@ public class Exprepair implements ModInitializer {
         return 1;
     }
 
+    private static int showAdminThreshold(CommandSourceStack source) {
+        String threshStr = defaultThreshold == 0 ? "none" : defaultThreshold + " levels";
+        source.sendSuccess(() -> Component.literal("  Default XP threshold: ").withStyle(ChatFormatting.GRAY)
+            .append(Component.literal(threshStr)
+                .withStyle(defaultThreshold == 0 ? ChatFormatting.YELLOW : ChatFormatting.AQUA))
+            .append(Component.literal("  "))
+            .append(suggestButton("set", "/exprepair admin threshold ",
+                "Set default XP threshold\n/exprepair admin threshold <levels>\nUse 0 to clear"))
+            .append(Component.literal("  "))
+            .append(runButton("clear", "/exprepair admin threshold 0", "Clear default XP threshold")), false);
+        return 1;
+    }
+
+    private static int showAdminMaxXp(CommandSourceStack source) {
+        source.sendSuccess(() -> Component.literal("  Max XP per repair: ").withStyle(ChatFormatting.GRAY)
+            .append(Component.literal(maxXpPerRepair + " XP").withStyle(ChatFormatting.AQUA))
+            .append(Component.literal("  "))
+            .append(suggestButton("set", "/exprepair admin maxXpPerRepair ",
+                "Set max XP spent per repair tick\n/exprepair admin maxXpPerRepair <xp>")), false);
+        return 1;
+    }
+
     private static int setDefaultThreshold(CommandSourceStack source, int levels) {
         defaultThreshold = levels;
         saveConfig();
@@ -1183,6 +1024,8 @@ public class Exprepair implements ModInitializer {
                     if (obj.has("defaultThreshold")) defaultThreshold = Math.max(0, obj.get("defaultThreshold").getAsInt());
                     if (obj.has("allowPassive"))     allowPassive     = obj.get("allowPassive").getAsBoolean();
                     if (obj.has("allowManual"))      allowManual      = obj.get("allowManual").getAsBoolean();
+                    // Safety: both defaults cannot be on simultaneously; manual wins
+                    if (defaultPassive && defaultManual) defaultPassive = false;
                 }
             } catch (Exception e) { /* keep defaults */ }
         } else {
@@ -1251,11 +1094,6 @@ public class Exprepair implements ModInitializer {
             && player.gameMode.getGameModeForPlayer() == GameType.SURVIVAL;
     }
 
-    private static boolean isEffective(Player player, AttachmentType<Boolean> attachment,
-                                       Map<UUID, Boolean> session) {
-        boolean permanent = player.getAttachedOrElse(attachment, false);
-        return session.getOrDefault(player.getUUID(), permanent);
-    }
 
     private static int getTotalXp(Player player) {
         return getXpToReachLevel(player.experienceLevel)
