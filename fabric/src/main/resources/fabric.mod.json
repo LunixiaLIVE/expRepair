@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "id": "exprepair",
+  "version": "${version}",
+  "name": "expRepair",
+  "description": "",
+  "authors": [],
+  "contact": {},
+  "license": "MIT",
+  "icon": "assets/exprepair/icon.png",
+  "environment": "*",
+  "entrypoints": {
+    "fabric-datagen": [
+      "net.lunix.exprepair.client.ExprepairDataGenerator"
+    ],
+    "main": [
+      "net.lunix.exprepair.fabric.ExprepairFabric"
+    ]
+  },
+  "mixins": [
+    "exprepair.mixins.json",
+    {
+      "config": "exprepair.client.mixins.json",
+      "environment": "client"
+    }
+  ],
+  "depends": {
+    "fabricloader": ">=${loader_version}",
+    "fabric-api": "*",
+    "minecraft": "${minecraft_version}"
+  }
+}
