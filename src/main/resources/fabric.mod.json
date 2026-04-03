@@ -3,9 +3,11 @@
   "id": "exprepair",
   "version": "${version}",
   "name": "expRepair",
-  "description": "",
-  "authors": [],
-  "contact": {},
+  "description": "Repair your items using stored XP. Supports passive auto-repair and manual repair with configurable thresholds and cooldowns.",
+  "authors": ["LunixiaLIVE"],
+  "contact": {
+    "sources": "https://github.com/LunixiaLIVE/expRepair"
+  },
   "license": "MIT",
   "icon": "assets/exprepair/icon.png",
   "environment": "*",
