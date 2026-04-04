@@ -201,6 +201,7 @@ public class Exprepair implements ModInitializer {
     // =========================================================================
 
     private static void sendLoginMessage(ServerPlayer player) {
+        if (!PlayerDataStore.isLoginMessageEnabled(player.getUUID())) return;
         boolean passivePerm = PlayerDataStore.isPassivePermanent(player.getUUID());
         boolean manualPerm  = PlayerDataStore.isManualPermanent(player.getUUID());
         boolean passiveOn   = passivePerm && allowPassive;
@@ -270,6 +271,9 @@ public class Exprepair implements ModInitializer {
                         .then(Commands.argument("levels", IntegerArgumentType.integer(0))
                             .executes(ctx -> setThreshold(ctx.getSource(),
                                 IntegerArgumentType.getInteger(ctx, "levels"))))
+                    )
+                    .then(Commands.literal("loginmessage")
+                        .executes(ctx -> toggleLoginMessage(ctx.getSource()))
                     )
 
                     // Admin: per-player
@@ -574,6 +578,21 @@ public class Exprepair implements ModInitializer {
         source.sendSuccess(() -> Component.literal("  ")
             .append(runButton("view threshold", "/exprepair threshold", "View your current XP threshold")), false);
 
+        return 1;
+    }
+
+    private static int toggleLoginMessage(CommandSourceStack source) throws CommandSyntaxException {
+        ServerPlayer player = source.getPlayerOrException();
+        boolean current = PlayerDataStore.isLoginMessageEnabled(player.getUUID());
+        boolean next = !current;
+        PlayerDataStore.setLoginMessage(player.getUUID(), next);
+        if (next) {
+            source.sendSuccess(() -> Component.literal("  Login message enabled.")
+                .withStyle(ChatFormatting.GREEN), false);
+        } else {
+            source.sendSuccess(() -> Component.literal("  Login message disabled.")
+                .withStyle(ChatFormatting.GRAY), false);
+        }
         return 1;
     }
 

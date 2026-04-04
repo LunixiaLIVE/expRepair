@@ -33,6 +33,7 @@ public class PlayerDataStore {
         public boolean passivePermanent = false;
         public boolean manualPermanent  = false;
         public int     passiveThreshold = 0;
+        public boolean loginMessage     = true;
     }
 
     public static void load() {
@@ -79,6 +80,16 @@ public class PlayerDataStore {
 
     public static void setManualPermanent(UUID uuid, boolean value) {
         data.computeIfAbsent(uuid.toString(), k -> new PlayerEntry()).manualPermanent = value;
+        save();
+    }
+
+    public static boolean isLoginMessageEnabled(UUID uuid) {
+        PlayerEntry entry = data.get(uuid.toString());
+        return entry == null || entry.loginMessage;
+    }
+
+    public static void setLoginMessage(UUID uuid, boolean value) {
+        data.computeIfAbsent(uuid.toString(), k -> new PlayerEntry()).loginMessage = value;
         save();
     }
 
