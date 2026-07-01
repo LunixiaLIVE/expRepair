@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "exprepair",
+  "version": "${version}",
+  "name": "expRepair",
+  "description": "Passive or manual item repair using XP, with per-player toggles and admin controls.",
+  "authors": ["LunixiaLIVE"],
+  "contact": {
+    "sources": "https://github.com/LunixiaLIVE/expRepair"
+  },
+  "license": "MIT",
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      "net.lunix.exprepair.fabric.ExpRepairFabric"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=${loader_version}",
+    "fabric-api": "*",
+    "minecraft": "26.2.x"
+  }
+}

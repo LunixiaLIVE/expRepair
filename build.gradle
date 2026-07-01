@@ -1,0 +1,49 @@
+plugins {
+    id "base"
+    id "architectury-plugin" version "3.5-SNAPSHOT"
+    id "dev.architectury.loom-no-remap" version "1.17.487" apply false
+    id "io.github.goooler.shadow" version "8.1.8" apply false
+}
+
+group = maven_group
+version = mod_version
+
+tasks.register("universalJar", Jar) {
+    group = "build"
+    description = "Produces a universal JAR containing both Fabric and NeoForge"
+    dependsOn ":fabric:shadowJar", ":neoforge:shadowJar"
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    outputs.upToDateWhen { false }  // doFirst inputs are untracked; always regenerate so the universal never goes stale
+    archiveFileName = "${archives_base_name}-${mod_version}_MC-${minecraft_version}-universal.jar"
+    destinationDirectory = layout.buildDirectory.dir("libs")
+    doFirst {
+        from zipTree(project(":fabric").tasks.named("shadowJar").get().archiveFile)
+        from zipTree(project(":neoforge").tasks.named("shadowJar").get().archiveFile)
+    }
+}
+
+tasks.named("build") { dependsOn "universalJar" }
+
+subprojects {
+    apply plugin: "java"
+    apply plugin: "architectury-plugin"
+
+    group = rootProject.group
+    version = rootProject.version
+
+    repositories {
+        maven { url = "https://maven.architectury.dev/" }
+        maven { url = "https://maven.neoforged.net/releases" }
+        maven { url = "https://maven.fabricmc.net/" }
+    }
+
+    java {
+        sourceCompatibility = JavaVersion.VERSION_25
+        targetCompatibility = JavaVersion.VERSION_25
+    }
+
+    tasks.withType(JavaCompile).configureEach {
+        options.encoding = "UTF-8"
+        options.release = 25
+    }
+}

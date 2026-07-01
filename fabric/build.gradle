@@ -1,0 +1,66 @@
+plugins {
+    id "dev.architectury.loom-no-remap"
+    id "architectury-plugin"
+    id "io.github.goooler.shadow"
+}
+
+architectury {
+    platformSetupLoomIde()
+    fabric()
+}
+
+loom {
+    mods {
+        "exprepair" {
+            sourceSet sourceSets.main
+        }
+    }
+}
+
+configurations {
+    common
+    shadowCommon
+    compileClasspath.extendsFrom common
+    runtimeClasspath.extendsFrom common
+    developmentFabric.extendsFrom common
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${minecraft_version}"
+
+    implementation "net.fabricmc:fabric-loader:${loader_version}"
+    api "net.fabricmc.fabric-api:fabric-api:${fabric_version}"
+
+    common(project(path: ":common")) { transitive false }
+    shadowCommon(project(path: ":common", configuration: "transformProductionFabric")) { transitive false }
+}
+
+processResources {
+    inputs.property "version", project.version
+    inputs.property "minecraft_version", minecraft_version
+    inputs.property "loader_version", loader_version
+    filteringCharset = "UTF-8"
+
+    filesMatching("fabric.mod.json") {
+        expand([
+            "version": project.version,
+            "minecraft_version": minecraft_version,
+            "loader_version": loader_version
+        ])
+    }
+}
+
+jar {
+    archiveClassifier = "raw"
+}
+
+shadowJar {
+    dependsOn(jar)
+    mainSpec.sourcePaths.clear()
+    from(zipTree(jar.archiveFile))
+    exclude "architectury.common.json"
+    configurations = [project.configurations.shadowCommon]
+    archiveClassifier = null
+    archiveFileName = "${archives_base_name}-${mod_version}_MC-${minecraft_version}-fabric.jar"
+    from("../LICENSE") { rename { "${it}_${archives_base_name}" } }
+}
