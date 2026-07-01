@@ -1,0 +1,59 @@
+plugins {
+    id "dev.architectury.loom-no-remap"
+    id "architectury-plugin"
+    id "io.github.goooler.shadow"
+}
+
+architectury {
+    platformSetupLoomIde()
+    neoForge()
+}
+
+loom {
+    mods {
+        "exprepair" {
+            sourceSet sourceSets.main
+        }
+    }
+}
+
+configurations {
+    common
+    shadowCommon
+    compileClasspath.extendsFrom common
+    runtimeClasspath.extendsFrom common
+    developmentNeoForge.extendsFrom common
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${minecraft_version}"
+
+    neoForge "net.neoforged:neoforge:${neoforge_version}"
+
+    common(project(path: ":common")) { transitive false }
+    shadowCommon(project(path: ":common", configuration: "transformProductionNeoForge")) { transitive false }
+}
+
+processResources {
+    inputs.property "version", project.version
+    filteringCharset = "UTF-8"
+
+    filesMatching("META-INF/neoforge.mods.toml") {
+        expand(["version": project.version])
+    }
+}
+
+jar {
+    archiveClassifier = "raw"
+}
+
+shadowJar {
+    dependsOn(jar)
+    mainSpec.sourcePaths.clear()
+    from(zipTree(jar.archiveFile))
+    exclude "architectury.common.json"
+    configurations = [project.configurations.shadowCommon]
+    archiveClassifier = null
+    archiveFileName = "${archives_base_name}-${mod_version}_MC-${minecraft_version}-neoforge.jar"
+    from("../LICENSE") { rename { "${it}_${archives_base_name}" } }
+}

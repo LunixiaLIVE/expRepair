@@ -1,0 +1,21 @@
+plugins {
+    id "dev.architectury.loom-no-remap"
+    id "architectury-plugin"
+}
+
+architectury {
+    common(rootProject.enabled_platforms.split(","))
+}
+
+loom {
+    mods {
+        "exprepair" {
+            sourceSet sourceSets.main
+        }
+    }
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${minecraft_version}"
+    implementation "net.fabricmc:fabric-loader:${loader_version}"
+}
