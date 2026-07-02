@@ -28,6 +28,7 @@
 | [`multi_26.2`](https://github.com/LunixiaLIVE/expRepair/tree/multi_26.2) | 26.2.x | Fabric · NeoForge | Fabric API *(Fabric only)* | [📄](https://github.com/LunixiaLIVE/expRepair/blob/multi_26.2/CHANGELOG.md) |
 | [`multi_26.1`](https://github.com/LunixiaLIVE/expRepair/tree/multi_26.1) | 26.1, 26.1.1, 26.1.2 | Fabric · NeoForge | Fabric API *(Fabric only)* | [📄](https://github.com/LunixiaLIVE/expRepair/blob/multi_26.1/CHANGELOG.md) |
 | [`multi_1.21.11`](https://github.com/LunixiaLIVE/expRepair/tree/multi_1.21.11) | 1.21.11 | Fabric · NeoForge | Fabric API *(Fabric only)* | [📄](https://github.com/LunixiaLIVE/expRepair/blob/multi_1.21.11/CHANGELOG.md) |
+| [`multi_1.21.5`](https://github.com/LunixiaLIVE/expRepair/tree/multi_1.21.5) | 1.21.5–1.21.10 | Fabric · NeoForge | Fabric API *(Fabric only)* | [📄](https://github.com/LunixiaLIVE/expRepair/blob/multi_1.21.5/CHANGELOG.md) |
 
 > [!TIP]
 > Every `multi_*` branch builds **one universal jar** that runs on **both** Fabric and NeoForge (per-loader `-fabric` / `-neoforge` jars are produced too). All of them are fully standalone — **no Architectury API at runtime**.
