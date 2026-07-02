@@ -1,0 +1,24 @@
+modLoader = "javafml"
+loaderVersion = "[4,)"
+license = "MIT"
+
+[[mods]]
+    modId = "exprepair"
+    version = "${version}"
+    displayName = "expRepair"
+    description = "Passive or manual item repair using XP, with per-player toggles and admin controls."
+
+[[dependencies.exprepair]]
+    modId = "neoforge"
+    type = "required"
+    versionRange = "[21.5,21.11)"
+    ordering = "NONE"
+    side = "BOTH"
+
+[[dependencies.exprepair]]
+    modId = "minecraft"
+    type = "required"
+    versionRange = "[1.21.5,1.21.11)"
+    ordering = "NONE"
+    side = "BOTH"
+
