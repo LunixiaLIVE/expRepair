@@ -22,7 +22,59 @@ tasks.register("universalJar", Jar) {
     }
 }
 
-tasks.named("build") { dependsOn "universalJar" }
+// Jar-in-jar multi-loader JAR: a thin shell nesting the Fabric (intermediary) and
+// NeoForge (Mojang) builds. Each loader loads only its own nested jar. This is the
+// only way to get one file working on both loaders for obfuscated MC.
+tasks.register("bundleJar", Jar) {
+    group = "build"
+    description = "Produces a jar-in-jar multi-loader JAR (Fabric + NeoForge nested)"
+    dependsOn ":fabric:remapJar", ":neoforge:remapJar"
+    outputs.upToDateWhen { false }
+    archiveFileName = "${archives_base_name}-${mod_version}_MC-${minecraft_version}-multi.jar"
+    destinationDirectory = layout.buildDirectory.dir("libs")
+    def modid = archives_base_name
+    def ver = mod_version
+    def metaDir = layout.buildDirectory.dir("jij-meta").get().asFile
+    // copy specs configured now; the metadata file CONTENTS are written in doFirst (before the copy runs)
+    from(new File(metaDir, "fabric.mod.json"))
+    from(new File(metaDir, "neoforge.mods.toml")) { into "META-INF" }
+    from(new File(metaDir, "jarjar-metadata.json")) { into "META-INF/jarjar"; rename { "metadata.json" } }
+    from(project(":fabric").tasks.named("remapJar").flatMap { it.archiveFile }) { into "META-INF/jars"; rename { "${modid}-fabric.jar" } }
+    from(project(":neoforge").tasks.named("remapJar").flatMap { it.archiveFile }) { into "META-INF/jarjar"; rename { "${modid}-neoforge.jar" } }
+    doFirst {
+        metaDir.mkdirs()
+        new File(metaDir, "fabric.mod.json").text = """{
+  "schemaVersion": 1,
+  "id": "${modid}_multi",
+  "version": "${ver}",
+  "name": "${modid} (multi-loader bundle)",
+  "description": "Loads the correct ${modid} build for Fabric or NeoForge.",
+  "environment": "*",
+  "jars": [ { "file": "META-INF/jars/${modid}-fabric.jar" } ]
+}"""
+        new File(metaDir, "neoforge.mods.toml").text = """modLoader = "javafml"
+loaderVersion = "[4,)"
+license = "MIT"
+
+[[mods]]
+    modId = "${modid}_multi"
+    version = "${ver}"
+    displayName = "${modid} (multi-loader bundle)"
+    description = "Loads the correct ${modid} build for Fabric or NeoForge."
+"""
+        new File(metaDir, "jarjar-metadata.json").text = """{
+  "jars": [
+    {
+      "identifier": { "group": "net.lunix", "artifact": "${modid}" },
+      "version": { "range": "[0,)", "artifactVersion": "${ver}" },
+      "path": "META-INF/jarjar/${modid}-neoforge.jar"
+    }
+  ]
+}"""
+    }
+}
+
+tasks.named("build") { dependsOn "bundleJar" }
 
 subprojects {
     apply plugin: "java"
