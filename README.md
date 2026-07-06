@@ -14,11 +14,136 @@
 
 ---
 
+> [!NOTE]
+> expRepair turns experience into durability. Enchant your gear with **Mending**, then let it top itself
+> off automatically as you play — or repair the tool in your hand on demand with a sneak + right-click. No
+> XP orbs to chase, no anvils, no grindstones. Per-version code and changelog live on the
+> [`multi_*`](#-versions--downloads) branches.
+
 ## ✨ Features
 
-- Passive or on-demand XP-based item repair
-- Per-player login-message toggle
-- Integrates with pvpOption to suppress repair during PvP
+Vanilla Mending only heals the item you're holding, and only when an XP orb happens to land — so your
+armor rots while you fight and your off-hand shield never sees a repair. expRepair fixes that by spending
+your **stored** XP the moment gear needs it:
+
+- **Two repair modes, one at a time.** Every player picks **Passive** (hands-off, always-on) or **Manual**
+  (deliberate, on-demand). Turning one on turns the other off, so there's never any doubt about what's
+  spending your levels.
+- **Passive repair — the whole loadout.** Once per second, every damaged **Mending** item you have
+  equipped — main hand, off-hand, and all four armor slots — is topped off from your XP pool, up to a
+  configurable budget. Your kit stays healthy in the background while you mine, fight, or fly.
+- **Manual repair — just the tool in hand.** Sneak + right-click in the air while holding a damaged
+  Mending item and it repairs on the spot, spending up to the same per-action XP budget. Nothing happens
+  passively, so you decide exactly when your levels get used.
+- **A protective XP floor.** Set a **threshold** and passive repair will never spend XP that would drop you
+  below that many levels — bank enough for that next enchant while the overflow keeps your gear alive.
+- **Mending is the key.** Only items enchanted with **Mending** are ever repaired — the mod respects the
+  vanilla enchant as the opt-in, so nothing touches gear you didn't intend to auto-repair.
+- **Survival only, and only while alive.** Creative and spectator players are skipped, and no XP is spent
+  on the death screen — your levels are only ever converted while you're actually playing.
+- **A clickable login summary.** On join you get a compact status line — passive/manual state, your XP
+  threshold, and inline buttons to toggle each — which every player can switch off with one command.
+- **Full admin control.** Operators set server-wide defaults, force a mode on or off for any player, and
+  can **block** either mode entirely so nobody can enable it. Config **hot-reloads** with no restart.
+- **Plays nice with PvP mods.** expRepair exposes a suppression hook that companion mods (e.g. pvpOption)
+  can use to pause repairs mid-fight, so combat mods can keep XP-repair from kicking in during a duel.
+- **Server-side.** Everything runs on the server — a **vanilla client** can connect and it just works, and
+  it runs the same in single-player.
+
+## 🔧 How it works
+
+XP is converted to durability at a fixed, transparent rate: **1 XP point restores 2 durability**. Each
+repair action spends at most `maxXpPerRepair` XP (default **8**, so up to **16 durability**), drawn from
+your **total** experience — levels *and* the progress bar — not just loose orbs.
+
+- **Passive** fires on a **1-second** tick. The `maxXpPerRepair` budget is a **total per tick**, shared
+  across every equipped Mending item in slot order (hand, off-hand, head, chest, legs, feet) until the
+  budget or the damage runs out. Before spending, it subtracts your **threshold** floor: if your XP is at
+  or below that level, passive repair simply waits until you've earned more.
+- **Manual** applies the full `maxXpPerRepair` budget to the **single** Mending item in your hand, per
+  sneak + right-click. It ignores the threshold — you asked for it, so it spends what it can.
+- Partially-damaged items get partial repairs; the overlay tells you whether the item was **fully
+  repaired** or by how much durability, and manual repair warns you when you're out of XP.
+
+Per-player choices (mode, threshold, login-message toggle) persist to `config/exprepair/playerdata.json`,
+and server settings live in `config/exprepair.json`.
+
+## ⌨️ Commands
+
+The base command is **`/exprepair`**, with **`/er`** as a shortcut alias. Running it bare opens a clickable
+help screen.
+
+### 👤 Player
+
+| Command | What it does |
+|---|---|
+| `/exprepair` | Clickable help — every command with inline buttons. |
+| `/exprepair passive` | Toggle **passive** repair on/off (turns manual off). |
+| `/exprepair manual` | Toggle **manual** repair on/off (turns passive off). |
+| `/exprepair threshold` | Show your current XP floor. |
+| `/exprepair threshold <levels>` | Set the XP floor passive repair won't spend below (`0` clears it). |
+| `/exprepair status` | Show your passive, manual, and threshold settings. |
+| `/exprepair serverdefaults` | View the server's default settings for new players. |
+| `/exprepair loginmessage` | Toggle the on-join status message for yourself. |
+| `/exprepair version` | Show the installed mod version. |
+
+### 🛡️ Admin
+
+All admin commands require **game-master permission** (op level 2+).
+
+| Command | What it does |
+|---|---|
+| `/exprepair admin` | View server-wide defaults and allow-flags. |
+| `/exprepair admin <player>` | View that player's live settings. |
+| `/exprepair admin <player> reset` | Reset a player to the current server defaults. |
+| `/exprepair admin <player> passive on\|off` | Force passive on/off for a player. |
+| `/exprepair admin <player> manual on\|off` | Force manual on/off for a player. |
+| `/exprepair admin <player> threshold <levels>` | Set a player's XP floor. |
+| `/exprepair admin passive on\|off` | Set the **default** passive state for new players. |
+| `/exprepair admin passive allow on\|off [silent]` | Allow or **block** passive repair server-wide. |
+| `/exprepair admin manual on\|off` | Set the **default** manual state for new players. |
+| `/exprepair admin manual allow on\|off [silent]` | Allow or **block** manual repair server-wide. |
+| `/exprepair admin threshold <levels>` | Set the default XP floor for new players. |
+| `/exprepair admin maxXpPerRepair <xp>` | Set the max XP spent per repair action (min `1`). |
+| `/exprepair admin reload [silent]` | Re-read `exprepair.json` from disk — no restart. |
+
+> [!TIP]
+> Add `silent` to `allow`, `reload`, and the like to apply the change **without** broadcasting it to
+> everyone online — handy for quiet mid-session tweaks.
+
+## 💡 Use cases
+
+- **Set-and-forget survivalist.** Enchant your armor and tools with Mending, run `/exprepair passive`, and
+  your whole loadout maintains itself from ambient XP while you play — no more mid-cave gear failures.
+- **XP-hungry enchanter.** You're saving levels for a big enchant. Run `/exprepair threshold 30` so passive
+  repair only ever spends the XP **above** level 30 — your gear still heals, but your enchanting fund is
+  protected.
+- **Deliberate hardcore player.** You want repairs on *your* terms. Flip to `/exprepair manual` and top off
+  the tool in your hand with a sneak + right-click exactly when you choose — no XP leaves your bar
+  otherwise.
+- **PvP-focused server.** Admins run `/exprepair admin passive allow off` to keep passive auto-repair out
+  of the arena, or lean on the PvP-suppression hook so a combat mod pauses repairs during fights — while
+  still letting players repair freely elsewhere.
+
+## ⚙️ Configuration
+
+Server settings live in **`config/exprepair.json`**, created on first launch and editable in-game via
+`/exprepair admin …`. Changes made through commands save immediately; edits made on disk apply with
+`/exprepair admin reload` — no restart required.
+
+| Key | Default | Meaning |
+|---|:---:|---|
+| `maxXpPerRepair` | `8` | Max XP spent per repair action — per tick for passive, per click for manual. 1 XP = 2 durability, so `8` = up to 16 durability. Minimum `1`. |
+| `defaultPassive` | `false` | Whether new players start with passive repair on. |
+| `defaultManual` | `false` | Whether new players start with manual repair on. |
+| `defaultThreshold` | `0` | Default XP-level floor for new players (`0` = no floor). |
+| `allowPassive` | `true` | Master switch — if `false`, **no** player can use passive repair. |
+| `allowManual` | `true` | Master switch — if `false`, **no** player can use manual repair. |
+
+> [!NOTE]
+> `defaultPassive` and `defaultManual` can't both be on — the two modes are mutually exclusive, so if both
+> are set to `true`, manual wins and passive is forced off. Per-player state (chosen mode, threshold, and
+> login-message toggle) is stored separately in `config/exprepair/playerdata.json`.
 
 ## 📦 Versions &amp; downloads
 
