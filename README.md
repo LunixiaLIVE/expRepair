@@ -52,3 +52,7 @@ The universal jar lands in `build/libs/` — drop it into your `mods/` folder on
 Released under the **MIT License**.
 
 <div align="center"><sub>⛏️ Part of the <a href="https://github.com/LunixiaLIVE">LunixiaLIVE</a> quality-of-life mod suite.</sub></div>
+
+---
+
+> ⛏️ Part of **[Lunixia's Minecraft QOL Mods](https://github.com/LunixiaLIVE/Lunixia-Minecraft-QOL-Mods)** — a suite of small QoL mods for Fabric + NeoForge.
