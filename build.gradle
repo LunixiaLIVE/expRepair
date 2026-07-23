@@ -14,7 +14,7 @@ tasks.register("universalJar", Jar) {
     dependsOn ":fabric:shadowJar", ":neoforge:shadowJar"
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     outputs.upToDateWhen { false }  // doFirst inputs are untracked; always regenerate so the universal never goes stale
-    archiveFileName = "${archives_base_name}-${mod_version}_MC-${minecraft_version}-universal.jar"
+    archiveFileName = "${archives_base_name}-${mod_version}_MC-${minecraft_version}-multi.jar"
     destinationDirectory = layout.buildDirectory.dir("libs")
     doFirst {
         from zipTree(project(":fabric").tasks.named("shadowJar").get().archiveFile)
