@@ -1,4 +1,4 @@
-<div align="center">
+﻿<div align="center">
 
 # 🔧 expRepair
 
@@ -171,7 +171,7 @@ cd expRepair
 ./gradlew build
 ```
 
-The universal jar lands in `build/libs/` — drop it into your `mods/` folder on either loader.
+The build output lands in `build/libs/` (a universal jar on 26.x, a `-multi.jar` jar-in-jar bundle on 1.21.x) — drop it into your `mods/` folder on either loader.
 </details>
 
 ## 📄 License
