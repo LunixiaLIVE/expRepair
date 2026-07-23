@@ -6,7 +6,8 @@
   "description": "Passive or manual item repair using XP, with per-player toggles and admin controls.",
   "authors": ["LunixiaLIVE"],
   "contact": {
-    "sources": "https://github.com/LunixiaLIVE/expRepair_multi"
+    "homepage": "https://github.com/LunixiaLIVE/Lunixia-Minecraft-QOL-Mods",
+    "sources": "https://github.com/LunixiaLIVE/expRepair"
   },
   "license": "MIT",
   "environment": "*",
