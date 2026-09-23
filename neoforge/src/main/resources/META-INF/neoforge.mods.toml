@@ -12,13 +12,13 @@ license = "MIT"
 [[dependencies.exprepair]]
     modId = "neoforge"
     type = "required"
-    versionRange = "[26.1,26.2)"
+    versionRange = "${mc_range_neoforge}"
     ordering = "NONE"
     side = "BOTH"
 
 [[dependencies.exprepair]]
     modId = "minecraft"
     type = "required"
-    versionRange = "[26.1,26.2)"
+    versionRange = "${mc_range_neoforge}"
     ordering = "NONE"
     side = "BOTH"

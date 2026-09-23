@@ -5,6 +5,20 @@ Works on client and server.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/); versioning per [SemVer](https://semver.org/).
 
+## [1.9.5] — 2026-09-23
+
+Minecraft 26.3 support, shipped as one jar for every 26.x release so far. No gameplay changes.
+
+### Added
+- Minecraft **26.3** support.
+
+### Changed
+- **One jar for Minecraft 26.1 through 26.3** — 26.1, 26.1.1, 26.1.2, 26.2 and 26.3 — on both Fabric and NeoForge, replacing the separate 26.1.x and 26.2.x jars. The mod's code is identical on all of them, so there is nothing to pick between.
+- The jar is now named `_MC-26.1-3`, and the code lives on the `multi_26.1-3` branch (`multi_26.1` and `multi_26.2` are retired).
+
+### Requirements
+- **Java 25**, Minecraft 26.1–26.3. Fabric: Fabric Loader ≥ 0.19.3 + Fabric API for your Minecraft version. NeoForge: 26.1.2.76 or newer *(no Fabric API)*.
+
 ## [1.9.4] — 2026-07-23
 
 Housekeeping release — metadata and packaging polish. No gameplay changes.

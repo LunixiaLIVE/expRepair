@@ -38,6 +38,7 @@ dependencies {
 processResources {
     inputs.property "version", project.version
     inputs.property "minecraft_version", minecraft_version
+    inputs.property "mc_range_fabric", mc_range_fabric
     inputs.property "loader_version", loader_version
     filteringCharset = "UTF-8"
 
@@ -45,6 +46,7 @@ processResources {
         expand([
             "version": project.version,
             "minecraft_version": minecraft_version,
+            "mc_range_fabric": mc_range_fabric,
             "loader_version": loader_version
         ])
     }
@@ -61,6 +63,6 @@ shadowJar {
     exclude "architectury.common.json"
     configurations = [project.configurations.shadowCommon]
     archiveClassifier = null
-    archiveFileName = "${archives_base_name}-${mod_version}_MC-${minecraft_version}-fabric.jar"
+    archiveFileName = "${archives_base_name}-${mod_version}_MC-${mc_label}-fabric.jar"
     from("../LICENSE") { rename { "${it}_${archives_base_name}" } }
 }

@@ -36,10 +36,11 @@ dependencies {
 
 processResources {
     inputs.property "version", project.version
+    inputs.property "mc_range_neoforge", mc_range_neoforge
     filteringCharset = "UTF-8"
 
     filesMatching("META-INF/neoforge.mods.toml") {
-        expand(["version": project.version])
+        expand(["version": project.version, "mc_range_neoforge": mc_range_neoforge])
     }
 }
 
@@ -54,6 +55,6 @@ shadowJar {
     exclude "architectury.common.json"
     configurations = [project.configurations.shadowCommon]
     archiveClassifier = null
-    archiveFileName = "${archives_base_name}-${mod_version}_MC-${minecraft_version}-neoforge.jar"
+    archiveFileName = "${archives_base_name}-${mod_version}_MC-${mc_label}-neoforge.jar"
     from("../LICENSE") { rename { "${it}_${archives_base_name}" } }
 }
